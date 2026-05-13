@@ -196,12 +196,18 @@ export const resolveTokenStore = ({
   if (typeof fromEnv === "string" && fromEnv.length > 0) {
     return envTokenStore(fromEnv);
   }
-  if (osPlatform === "darwin") {
-    return macKeychainTokenStore();
-  }
-  const base =
+  const fileBase =
     fallbackBasePath ??
     env["CODEX_LINK_HOME"] ??
     join(homedir(), ".codex-link-p2p");
-  return fileTokenStore({ basePath: base });
+  // 明示的な kind 指定 (test / CI / Linux Docker などで Keychain を回避するため).
+  const explicit = env["CODEX_LINK_TOKEN_STORE"];
+  if (explicit === "file") return fileTokenStore({ basePath: fileBase });
+  if (explicit === "keychain") return macKeychainTokenStore();
+  // env なら CODEX_LINK_HOST_TOKEN が必須 — 上で処理済みなのでここに来ない.
+
+  if (osPlatform === "darwin") {
+    return macKeychainTokenStore();
+  }
+  return fileTokenStore({ basePath: fileBase });
 };

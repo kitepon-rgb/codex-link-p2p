@@ -23,3 +23,5 @@ export * from "./peer.js";
 export * from "./codex.js";
 export * from "./codex-events.js";
 export * from "./session.js";
+export * from "./capabilities.js";
+export { runInit, runStart, type StartedHost } from "./cli.js";
