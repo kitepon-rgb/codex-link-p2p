@@ -4,19 +4,18 @@
 #   docker compose -f compose.yaml -f compose.prod.yaml up -d --build
 #
 # 前提:
-#   - DNS A レコード:
-#       codex-link.kitepon.dynv6.net       → サーバー IP
-#       codex-link-turn.kitepon.dynv6.net  → サーバー IP
+#   - DNS A レコード: codex-link-p2p.kitepon.dynv6.net → サーバー IP
+#     (HTTPS + TURN を 1 ホスト名に同居. Caddy が ACME で取った cert を coturn が共有)
 #   - .env (本番値) を同ディレクトリに置く. example: .env.prod.example
 #   - サーバーの 80 / 443 / 3478 (UDP+TCP) / 5349 (UDP+TCP) / 49152-65535/udp が開いている
 #
 # トポロジ:
 #   iPhone / Mac Host
 #         │
-#         ├─ HTTPS+WSS  codex-link.kitepon.dynv6.net:443
+#         ├─ HTTPS+WSS  codex-link-p2p.kitepon.dynv6.net:443
 #         │              └→ Caddy → relay:3000 (内部 network)
 #         │
-#         └─ TURN/TURNS codex-link-turn.kitepon.dynv6.net:3478 / :5349
+#         └─ TURN/TURNS codex-link-p2p.kitepon.dynv6.net:3478 / :5349
 #                        └→ coturn (host network mode)
 #
 # coturn の TLS cert は Caddy が ACME で発行したものを共有 volume 経由で参照する.
@@ -25,8 +24,8 @@ services:
   relay:
     # base compose.yaml の relay を本番向けに override.
     environment:
-      CODEX_LINK_RELAY_URL: https://codex-link.kitepon.dynv6.net
-      TURN_URLS: stun:stun.l.google.com:19302,turn:codex-link-turn.kitepon.dynv6.net:3478,turns:codex-link-turn.kitepon.dynv6.net:5349
+      CODEX_LINK_RELAY_URL: https://codex-link-p2p.kitepon.dynv6.net
+      TURN_URLS: stun:stun.l.google.com:19302,turn:codex-link-p2p.kitepon.dynv6.net:3478,turns:codex-link-p2p.kitepon.dynv6.net:5349
     ports: !reset []  # 公開しない. Caddy 経由のみ.
     expose:
       - "3000"
@@ -43,8 +42,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      RELAY_DOMAIN: codex-link.kitepon.dynv6.net
-      TURN_DOMAIN: codex-link-turn.kitepon.dynv6.net
+      RELAY_DOMAIN: codex-link-p2p.kitepon.dynv6.net
     depends_on:
       relay:
         condition: service_healthy
@@ -60,7 +58,6 @@ services:
     environment:
       TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?TURN_SHARED_SECRET must be set}
       TURN_REALM: ${TURN_REALM:-codex-link-p2p.local}
-      TURN_DOMAIN: codex-link-turn.kitepon.dynv6.net
       DETECT_EXTERNAL_IP: "yes"
       DETECT_RELAY_IP: "yes"
     # 本番向け command: TLS cert を Caddy のストレージから参照.
@@ -80,8 +77,8 @@ services:
       --no-cli
       --no-stdout-log
       --log-file=stdout
-      --cert=/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/codex-link-turn.kitepon.dynv6.net/codex-link-turn.kitepon.dynv6.net.crt
-      --pkey=/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/codex-link-turn.kitepon.dynv6.net/codex-link-turn.kitepon.dynv6.net.key
+      --cert=/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/codex-link-p2p.kitepon.dynv6.net/codex-link-p2p.kitepon.dynv6.net.crt
+      --pkey=/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/codex-link-p2p.kitepon.dynv6.net/codex-link-p2p.kitepon.dynv6.net.key
 
 networks:
   edge:

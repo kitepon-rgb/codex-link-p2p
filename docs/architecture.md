@@ -139,7 +139,7 @@ iPhone UI で接続中の WebRTC 経路を表示する:
 
 MVP では Relay と coturn を kite サーバー (`kitepon.dynv6.net`) に Docker Compose でデプロイする。
 
-- **DNS**: 動的 DNS で `codex-link.kitepon.dynv6.net` と `codex-link-turn.kitepon.dynv6.net` を自宅 router の WAN IP に向ける
+- **DNS**: 動的 DNS で `codex-link-p2p.kitepon.dynv6.net` を自宅 router の WAN IP に向ける (HTTPS + TURN を 1 ホスト名に同居)
 - **TLS / リバースプロキシ**: 既存の `caddy:2` コンテナの `Caddyfile` に sub-domain ブロックを追加し、`reverse_proxy <LAN IP>:3000 { flush_interval -1 }` で Relay へ forward。WebSocket upgrade は Caddy が自動で扱う
 - **Relay コンテナ**: `compose.yaml` で build、`-p 127.0.0.1:3000:3000` で LAN bind、Caddy 経由でのみ外部公開
 - **coturn コンテナ**: `network_mode: host` で host network 上に listen (3478/udp+tcp、49152-65535/udp range)。`turns` 用 TLS は Caddy で TCP/443 (SNI) を `5349` に振り分けるか、coturn 内蔵で cert を読む

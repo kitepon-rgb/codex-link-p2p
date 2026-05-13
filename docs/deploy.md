@@ -19,8 +19,8 @@
                            └───────────────┘
 
             iPhone / Mac Host ─── STUN ───► stun.l.google.com:19302  (Google public)
-                              ─── TURN ───► codex-link-turn.kitepon.dynv6.net:3478
-                              ─── TURNS ──► codex-link-turn.kitepon.dynv6.net:5349
+                              ─── TURN ───► codex-link-p2p.kitepon.dynv6.net:3478
+                              ─── TURNS ──► codex-link-p2p.kitepon.dynv6.net:5349
                                               │
                                               ▼
                                        ┌─────────────┐
@@ -38,13 +38,12 @@ DTLS-SRTP により Relay / coturn のどちらも payload を **復号できな
 
 ### 1. DNS
 
-[kitepon.dynv6.net](https://dynv6.com/) の管理画面で 2 つの A レコードを追加.
-本番デプロイ着手のタイミングでまとめて取得して構わない:
+[kitepon.dynv6.net](https://dynv6.com/) の管理画面で 1 つの A レコードを追加.
+HTTPS (443) と TURN (3478/5349) は同じホスト名で別ポート同居.
 
-| Hostname                                | Type | Target                |
-|-----------------------------------------|------|-----------------------|
-| `codex-link.kitepon.dynv6.net`          | A    | サーバー IPv4         |
-| `codex-link-turn.kitepon.dynv6.net`     | A    | サーバー IPv4 (同じ)  |
+| Hostname                                | Type | Target          |
+|-----------------------------------------|------|-----------------|
+| `codex-link-p2p.kitepon.dynv6.net`      | A    | サーバー IPv4   |
 
 ### 2. ファイアウォール / ポート
 
@@ -87,7 +86,7 @@ $EDITOR .env
 docker compose -f compose.yaml -f compose.prod.yaml up -d --build
 
 # 数十秒待って疎通確認
-curl -fsS https://codex-link.kitepon.dynv6.net/api/health
+curl -fsS https://codex-link-p2p.kitepon.dynv6.net/api/health
 # => {"ok":true}
 ```
 
@@ -141,7 +140,7 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d --force-recreate relay
 turnutils_uclient -v -y \
   -u "$(date -d '+5 min' +%s):smoke" \
   -w "$(echo -n "$(date -d '+5 min' +%s):smoke" | openssl dgst -sha1 -hmac "$TURN_SHARED_SECRET" -binary | base64)" \
-  codex-link-turn.kitepon.dynv6.net
+  codex-link-p2p.kitepon.dynv6.net
 ```
 
 ## トラブルシュート
@@ -151,7 +150,7 @@ turnutils_uclient -v -y \
 | `curl https://codex-link...` で TLS handshake 失敗 | Caddy ログ. ACME challenge が 80/tcp で完了したか      |
 | iPhone から接続できないが Mac Host は OK         | iPhone 側の TURN credential 取得失敗. Relay の `issueTurnCredential` ログ |
 | `relay/api/health` が timeout                    | container のヘルスチェック (`docker compose ps`) と Caddy のアップストリーム設定 |
-| coturn が TLS で連携失敗                         | Caddy が `codex-link-turn.kitepon.dynv6.net` の cert を発行したか. `caddy_data` volume 内に `.crt` / `.key` が出ているか |
+| coturn が TLS で連携失敗                         | Caddy が `codex-link-p2p.kitepon.dynv6.net` の cert を発行したか. `caddy_data` volume 内に `.crt` / `.key` が出ているか |
 | 接続経路バッジが常に `turn`                      | NAT が両側 symmetric. これは TURN 必須なので想定内    |
 
 ## 関連

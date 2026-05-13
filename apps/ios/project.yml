@@ -63,7 +63,7 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSCameraUsageDescription: "QR code scanning (Mac Host との pairing で使用)"
-        CodexLinkRelayURL: "https://codex-link.kitepon.dynv6.net"
+        CodexLinkRelayURL: "https://codex-link-p2p.kitepon.dynv6.net"
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:

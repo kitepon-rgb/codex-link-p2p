@@ -7,7 +7,7 @@
 // 取得する (token-store.ts).
 //
 // 既定値:
-// - relayUrl: https://codex-link.kitepon.dynv6.net   (Phase 9 で npm package に
+// - relayUrl: https://codex-link-p2p.kitepon.dynv6.net   (Phase 9 で npm package に
 //   ハードコードする本番 URL. Phase 3 では env で上書き可能)
 // - codexCommand: "codex"
 
@@ -22,7 +22,7 @@ import type {
   UserId,
 } from "@codex-link/protocol/rendezvous";
 
-export const DEFAULT_RELAY_URL = "https://codex-link.kitepon.dynv6.net";
+export const DEFAULT_RELAY_URL = "https://codex-link-p2p.kitepon.dynv6.net";
 export const DEFAULT_CODEX_COMMAND = "codex";
 
 export interface HostConfig {

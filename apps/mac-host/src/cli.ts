@@ -10,7 +10,7 @@
 //            将来. 現状の `init` / `start` 中の REPL 出力で代用.
 //
 // 起動例:
-//   codex-link-host init --relay https://codex-link.kitepon.dynv6.net \
+//   codex-link-host init --relay https://codex-link-p2p.kitepon.dynv6.net \
 //                        --bootstrap-token $BOOT \
 //                        --display-name "kite Mac"
 //   codex-link-host start

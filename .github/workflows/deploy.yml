@@ -92,7 +92,7 @@ jobs:
         run: |
           # public URL は固定. DNS A は DEPLOY_HOST と同じサーバを指している前提.
           for i in $(seq 1 15); do
-            if curl -fsS https://codex-link.kitepon.dynv6.net/api/health | grep -q '"ok":true'; then
+            if curl -fsS https://codex-link-p2p.kitepon.dynv6.net/api/health | grep -q '"ok":true'; then
               echo "[smoke] /api/health ok"
               exit 0
             fi

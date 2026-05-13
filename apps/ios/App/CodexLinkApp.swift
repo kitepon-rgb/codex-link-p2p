@@ -42,7 +42,7 @@ private struct OnboardingView: View {
 
     @State private var relayUrl: String = Bundle.main
         .object(forInfoDictionaryKey: "CodexLinkRelayURL") as? String
-        ?? "https://codex-link.kitepon.dynv6.net"
+        ?? "https://codex-link-p2p.kitepon.dynv6.net"
     @State private var sessionToken: String = ""
     @State private var userId: String = ""
     @State private var deviceId: String = ""
