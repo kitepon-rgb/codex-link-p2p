@@ -19,3 +19,4 @@
 export * from "./config.js";
 export * from "./token-store.js";
 export * from "./signaling-client.js";
+export * from "./peer.js";
