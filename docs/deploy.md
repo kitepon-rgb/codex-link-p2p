@@ -47,71 +47,142 @@ HTTPS (443) と TURN (3478/5349) は同じホスト名で別ポート同居.
 
 ### 2. ファイアウォール / ポート
 
-サーバーで開ける必要があるポート:
+サーバー / ルーター双方で開ける必要があるポート:
 
-| Port      | Proto    | 目的                                    |
-|-----------|----------|----------------------------------------|
-| 80        | TCP      | Caddy ACME HTTP-01 challenge           |
-| 443       | TCP      | Caddy: HTTPS + WSS → Relay             |
-| 3478      | UDP+TCP  | coturn: STUN / TURN                    |
-| 5349      | UDP+TCP  | coturn: TURNS (TLS)                    |
-| 49152–65535 | UDP    | coturn: relay candidate range          |
+| Port        | Proto    | 経路                                              | 目的                                    |
+|-------------|----------|---------------------------------------------------|----------------------------------------|
+| 22          | TCP      | router → 192.168.1.2 (GH Actions 経由 deploy 用)  | SSH inbound (auto-deploy)              |
+| 80          | TCP      | router → 192.168.1.2 (既存 Caddy が使用)          | Caddy ACME HTTP-01 challenge           |
+| 443         | TCP      | router → 192.168.1.2 (既存 Caddy)                 | HTTPS + WSS → Relay                    |
+| 3478        | UDP+TCP  | router → 192.168.1.2                              | coturn: STUN / TURN                    |
+| 5349        | UDP+TCP  | router → 192.168.1.2                              | coturn: TURNS (TLS)                    |
+| 49152–65535 | UDP      | router → 192.168.1.2                              | coturn: relay candidate range          |
 
-`ufw` の場合:
+`ufw` の場合 (本リポジトリ ops 用):
 ```bash
-sudo ufw allow 80/tcp 443/tcp 3478 5349
+sudo ufw allow 22/tcp 80/tcp 443/tcp 3478 5349
 sudo ufw allow 49152:65535/udp
 ```
 
 ### 3. サーバー初回セットアップ
 
+> このリポジトリで実際に運用している環境では、サーバ (`kitepon.dynv6.net` の
+> 192.168.1.2) に **既に license-server compose project の Caddy** が稼働して
+> いて 80/443 を占有しています. その場合は **既存 Caddy を再利用** する形が
+> ベスト (本セクションは その前提で書いています). 単独サーバへ deploy する
+> 場合は [services/caddy/Caddyfile](../services/caddy/Caddyfile) を参考に
+> 独自 Caddy を立ててください.
+
 ```bash
-# Docker + compose
+# Docker + git (Ubuntu 26.04 LTS では既に入っていれば skip)
 sudo apt-get update
 sudo apt-get install -y docker.io docker-compose-plugin git
 sudo usermod -aG docker $USER
 newgrp docker
 
 # リポジトリを clone
-mkdir -p ~/codex-link-p2p && cd ~/codex-link-p2p
-git clone https://github.com/kitepon-rgb/codex-link-p2p.git .
+cd ~ && git clone https://github.com/kitepon-rgb/codex-link-p2p.git
+cd codex-link-p2p
 
-# 本番 .env を作成 (secrets を埋める)
-cp .env.prod.example .env
-$EDITOR .env
-#   CODEX_LINK_HOST_BOOTSTRAP_TOKEN=`openssl rand -hex 32`
-#   TURN_SHARED_SECRET=`openssl rand -hex 32`
+# 本番 .env を作成 (secrets は openssl で生成)
+cat > .env <<EOF
+CODEX_LINK_RELAY_URL=https://codex-link-p2p.kitepon.dynv6.net
+CODEX_LINK_HOST_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)
+TURN_SHARED_SECRET=$(openssl rand -hex 32)
+TURN_REALM=codex-link-p2p
+TURN_URLS=stun:stun.l.google.com:19302,turn:codex-link-p2p.kitepon.dynv6.net:3478,turns:codex-link-p2p.kitepon.dynv6.net:5349
+TURN_CREDENTIAL_TTL_SEC=300
+EOF
+chmod 600 .env
 
-# 初回起動
-docker compose -f compose.yaml -f compose.prod.yaml up -d --build
-
-# 数十秒待って疎通確認
-curl -fsS https://codex-link-p2p.kitepon.dynv6.net/api/health
-# => {"ok":true}
+# 起動 (relay + coturn の 2 つだけ. Caddy は既存を再利用するので含めない)
+docker compose -f compose.yaml -f compose.prod.yaml up -d --build relay coturn
 ```
 
-### 4. (Optional) GitHub から自動デプロイ
+### 4. 既存 Caddy の Caddyfile に vhost を追加
 
-`main` へ push されたらサーバーで `git pull && docker compose up -d` が走る形.
+`/home/kite/license-server/Caddyfile` の末尾に下記 block を append し、reload:
+
+```caddy
+# BEGIN codex-link-p2p managed route
+codex-link-p2p.kitepon.dynv6.net {
+	encode zstd gzip
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @ws 192.168.1.2:48080 {
+		flush_interval -1
+	}
+	reverse_proxy 192.168.1.2:48080 {
+		flush_interval -1
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-X-Powered-By
+		-Server
+	}
+}
+# END codex-link-p2p managed route
+```
+
+```bash
+docker exec caddy caddy validate --config /etc/caddy/Caddyfile
+docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
+数十秒で Let's Encrypt 自動発行が完了し、HTTPS が立ち上がる:
+
+```bash
+# 内部 (Caddy 経由なし、直接 relay)
+curl -fsS http://192.168.1.2:48080/api/health     # => {"ok":true}
+# 公開 URL (Caddy + ACME 経由)
+curl -fsS https://codex-link-p2p.kitepon.dynv6.net/api/health   # => {"ok":true}
+```
+
+### 5. (Optional) GitHub から自動デプロイ
+
+`main` へ push されたらサーバーで `git fetch + reset --hard + compose up` が走る形.
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) が雛形.
 
-サーバー側でデプロイ専用 SSH キーを作る:
+サーバー側でデプロイ専用 SSH キーを作る (秘密鍵はサーバから出さない):
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/codex-link-deploy -N "" -C "github-actions deploy"
-cat ~/.ssh/codex-link-deploy.pub >> ~/.ssh/authorized_keys
-cat ~/.ssh/codex-link-deploy        # 秘密鍵 (GitHub Secrets に貼る)
+ssh-keygen -t ed25519 -f ~/.ssh/codex-link-p2p-deploy -N "" -C "github-actions codex-link-p2p deploy"
+cat ~/.ssh/codex-link-p2p-deploy.pub >> ~/.ssh/authorized_keys
 ```
 
-GitHub repo Settings → Secrets and variables → Actions に 4 つ追加:
+dev 端末で `gh` CLI から Secret を 4 つ流し込む (秘密鍵は pipe で transcript に出さない):
+```bash
+ssh kite@192.168.1.2 'cat ~/.ssh/codex-link-p2p-deploy' \
+  | gh secret set CODEX_LINK_DEPLOY_KEY --repo kitepon-rgb/codex-link-p2p
+echo -n "kitepon.dynv6.net"          | gh secret set CODEX_LINK_DEPLOY_HOST --repo kitepon-rgb/codex-link-p2p
+echo -n "kite"                       | gh secret set CODEX_LINK_DEPLOY_USER --repo kitepon-rgb/codex-link-p2p
+echo -n "/home/kite/codex-link-p2p"  | gh secret set CODEX_LINK_DEPLOY_DIR  --repo kitepon-rgb/codex-link-p2p
+```
 
-| Name                       | Value                                |
-|----------------------------|--------------------------------------|
-| `CODEX_LINK_DEPLOY_HOST`   | サーバーホスト名 (例: kitepon.dynv6.net) |
-| `CODEX_LINK_DEPLOY_USER`   | SSH ユーザー名                       |
-| `CODEX_LINK_DEPLOY_KEY`    | `~/.ssh/codex-link-deploy` の中身全文 |
-| `CODEX_LINK_DEPLOY_DIR`    | 例: `/home/kite/codex-link-p2p`      |
+設定済 Secret 一覧 (確認用):
+```bash
+gh secret list --repo kitepon-rgb/codex-link-p2p
+```
 
-これ以降、`main` への push で workflow が走り、自動で `git pull + compose up + /api/health smoke` まで実行する.
+これ以降、`main` への push で workflow が走り、`git fetch + reset --hard + compose up --build + caddy reload + 公開 URL smoke` まで自動実行される.
+
+### 6. hairpin NAT について (LAN 開発時)
+
+`kitepon.dynv6.net` の自宅 router が hairpin NAT (LAN→WAN→LAN ループバック) を
+サポートしていない場合、**LAN 内**から `https://codex-link-p2p.kitepon.dynv6.net`
+にアクセスすると timeout する. 開発端末の `/etc/hosts` に下記を追加して回避:
+
+```
+192.168.1.2 codex-link-p2p.kitepon.dynv6.net
+```
+
+GH Actions runner や Cellular 経由の iPhone は WAN 経由で正常に届く (この問題は
+LAN 内クライアント特有).
 
 ## 運用
 
