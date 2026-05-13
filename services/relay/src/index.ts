@@ -14,4 +14,5 @@
 // import 制約: `@codex-link/protocol/session` をここから import してはいけない。
 // signaling envelope は base64 のまま forward する。
 
-export {};
+export * from "./config.js";
+export * from "./state.js";

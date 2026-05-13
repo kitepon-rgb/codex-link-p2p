@@ -7,14 +7,15 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js"
   },
   "dependencies": {
     "@codex-link/protocol": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^20",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.9"
   }
 }
