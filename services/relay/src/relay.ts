@@ -56,7 +56,10 @@ export type RelayErrorCode =
   | "pairing_code_not_found"
   | "pairing_code_expired"
   | "pairing_code_redeemed"
-  | "host_access_denied";
+  | "host_access_denied"
+  | "rate_limited"
+  | "host_offline"
+  | "signal_invalid";
 
 export class RelayError extends Error {
   readonly code: RelayErrorCode;
