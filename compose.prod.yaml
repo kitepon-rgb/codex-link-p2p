@@ -1,24 +1,37 @@
-# codex-link-p2p — 本番デプロイ overlay.
+# codex-link-p2p — 本番デプロイ overlay (kitepon.dynv6.net 同居サーバ向け).
 #
-# 使い方 (本番サーバー、Linux ホスト想定):
+# 同居サーバには既に `license-server` compose project の `caddy` が稼働しており、
+# 既存 Caddy が:
+#   - 80/443 を占有
+#   - `reverse_proxy 192.168.1.2:<host-port>` 形式で各サービスへ振り分ける
+#   - Let's Encrypt cert を `license-server_caddy_data` volume に蓄積
+# という構成. ここに codex-link-p2p を後付けで載せる.
+#
+# 使い方 (本番サーバー、Linux ホスト):
 #   docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+#   # その後 license-server の Caddyfile に下記 vhost block を append し、reload:
+#   #   docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+#
+# Caddyfile に append する block (詳細は docs/deploy.md):
+#   # BEGIN codex-link-p2p managed route
+#   codex-link-p2p.kitepon.dynv6.net {
+#     encode zstd gzip
+#     @ws { header Connection *Upgrade*; header Upgrade websocket }
+#     reverse_proxy @ws 192.168.1.2:13000 { flush_interval -1 }
+#     reverse_proxy 192.168.1.2:13000 { flush_interval -1 }
+#     header {
+#       Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#       X-Content-Type-Options "nosniff"
+#       -Server
+#     }
+#   }
+#   # END codex-link-p2p managed route
 #
 # 前提:
-#   - DNS A レコード: codex-link-p2p.kitepon.dynv6.net → サーバー IP
-#     (HTTPS + TURN を 1 ホスト名に同居. Caddy が ACME で取った cert を coturn が共有)
+#   - DNS A レコード: codex-link-p2p.kitepon.dynv6.net → サーバー WAN IP
 #   - .env (本番値) を同ディレクトリに置く. example: .env.prod.example
-#   - サーバーの 80 / 443 / 3478 (UDP+TCP) / 5349 (UDP+TCP) / 49152-65535/udp が開いている
-#
-# トポロジ:
-#   iPhone / Mac Host
-#         │
-#         ├─ HTTPS+WSS  codex-link-p2p.kitepon.dynv6.net:443
-#         │              └→ Caddy → relay:3000 (内部 network)
-#         │
-#         └─ TURN/TURNS codex-link-p2p.kitepon.dynv6.net:3478 / :5349
-#                        └→ coturn (host network mode)
-#
-# coturn の TLS cert は Caddy が ACME で発行したものを共有 volume 経由で参照する.
+#   - サーバーの 3478/5349 (TCP+UDP) と 49152-65535/udp は router 側で forward 済み
+#     (80/443 は既存 license-server で開いている前提)
 
 services:
   relay:
@@ -26,32 +39,15 @@ services:
     environment:
       CODEX_LINK_RELAY_URL: https://codex-link-p2p.kitepon.dynv6.net
       TURN_URLS: stun:stun.l.google.com:19302,turn:codex-link-p2p.kitepon.dynv6.net:3478,turns:codex-link-p2p.kitepon.dynv6.net:5349
-    ports: !reset []  # 公開しない. Caddy 経由のみ.
-    expose:
-      - "3000"
-    networks:
-      - edge
-
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./services/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      RELAY_DOMAIN: codex-link-p2p.kitepon.dynv6.net
-    depends_on:
-      relay:
-        condition: service_healthy
-    networks:
-      - edge
+    # 既存 Caddy (license-server_default network) が同居サーバの LAN IP 越しに
+    # 到達できるよう、host の LAN IP に bind する (localhost ではなく).
+    ports: !reset
+      - "192.168.1.2:13000:3000"
     restart: unless-stopped
 
   coturn:
-    # 本番では Caddy 発行 cert を読みに行く必要があるので volume を追加.
+    # 本番では既存 Caddy が ACME で取った cert を共有 volume 経由で参照する.
+    # license-server compose project が作った external volume をマウント.
     volumes:
       - ./services/relay/turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
       - caddy_data:/caddy-data:ro
@@ -60,7 +56,6 @@ services:
       TURN_REALM: ${TURN_REALM:-codex-link-p2p.local}
       DETECT_EXTERNAL_IP: "yes"
       DETECT_RELAY_IP: "yes"
-    # 本番向け command: TLS cert を Caddy のストレージから参照.
     # Caddy ACME (Let's Encrypt) 発行物の path:
     #   /caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<DOMAIN>/<DOMAIN>.{crt,key}
     command: >
@@ -79,11 +74,12 @@ services:
       --log-file=stdout
       --cert=/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/codex-link-p2p.kitepon.dynv6.net/codex-link-p2p.kitepon.dynv6.net.crt
       --pkey=/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/codex-link-p2p.kitepon.dynv6.net/codex-link-p2p.kitepon.dynv6.net.key
-
-networks:
-  edge:
-    driver: bridge
+    restart: unless-stopped
 
 volumes:
+  # 既存 license-server compose project が作った Caddy data volume を共有する.
+  # cert (acme-v02.../codex-link-p2p.kitepon.dynv6.net.crt / .key) を coturn が
+  # read-only で参照する.
   caddy_data:
-  caddy_config:
+    external: true
+    name: license-server_caddy_data

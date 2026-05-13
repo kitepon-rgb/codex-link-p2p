@@ -24,7 +24,6 @@ on:
     paths:
       - "services/relay/**"
       - "packages/protocol/**"
-      - "services/caddy/**"
       - "compose.yaml"
       - "compose.prod.yaml"
       - ".github/workflows/deploy.yml"
@@ -74,7 +73,9 @@ jobs:
             git fetch --depth=1 origin main
             git reset --hard origin/main
             echo '[deploy] compose up'
-            docker compose -f compose.yaml -f compose.prod.yaml up -d --build relay caddy coturn
+            docker compose -f compose.yaml -f compose.prod.yaml up -d --build relay coturn
+            echo '[deploy] reloading shared Caddy (license-server compose project)...'
+            docker exec caddy caddy reload --config /etc/caddy/Caddyfile || true
             echo '[deploy] waiting for relay to be healthy...'
             for i in \$(seq 1 30); do
               status=\$(docker compose -f compose.yaml -f compose.prod.yaml ps relay --format '{{.Health}}' || true)
