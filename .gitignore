@@ -29,3 +29,6 @@ DerivedData/
 
 # Tooling
 .claude/
+
+# xcodebuild output
+apps/ios/build/

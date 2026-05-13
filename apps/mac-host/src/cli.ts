@@ -60,6 +60,7 @@ const help = (): string =>
     "Usage:",
     "  codex-link-host init   [--relay URL] [--bootstrap-token T] [--display-name N] [--host-platform macos|windows|linux]",
     "  codex-link-host start  [--relay URL]",
+    "  codex-link-host pair   [--relay URL]   (issue a one-shot pairing code, prints to stdout)",
     "  codex-link-host help",
     "",
     "Environment overrides:",
@@ -296,6 +297,66 @@ export const runStart = async (opts: StartOptions): Promise<StartedHost> => {
   return { signaling, peerManager, session, stop };
 };
 
+// ===== pair (one-shot pairing code issuer) =====
+
+interface PairOptions {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly relayUrlOverride?: string;
+}
+
+export const runPair = async (opts: PairOptions): Promise<void> => {
+  const configPath = resolveHostConfigPath(opts.env);
+  const config = await loadHostConfig(configPath);
+  const relayUrl = opts.relayUrlOverride ?? config.relayUrl;
+
+  const tokenStore = resolveTokenStore({ env: opts.env });
+  const token = await tokenStore.get(config.userId, config.deviceId);
+  if (token === null) {
+    throw new Error(
+      `No session token found in ${tokenStore.kind} store. Run \`codex-link-host init\`.`,
+    );
+  }
+
+  const code: string = await new Promise((resolve, reject) => {
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      signaling.close();
+      reject(new Error("Timed out waiting for pairing_code.issued (10s)"));
+    }, 10_000);
+
+    const signaling = new SignalingClient({
+      relayUrl,
+      sessionToken: token,
+      handlers: {
+        onWelcome: () => {
+          signaling.announce(config.hostId);
+          signaling.createPairingCode(config.hostId);
+        },
+        onPairingCodeIssued: (msg) => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          signaling.close();
+          resolve(msg.code);
+        },
+        onError: (e) => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          signaling.close();
+          reject(new Error(`signaling error: ${JSON.stringify(e)}`));
+        },
+        onLog: () => {},
+      },
+    });
+    signaling.start();
+  });
+
+  STDOUT.write(`${code}\n`);
+};
+
 const toCliLevel = (
   l: "debug" | "info" | "warn" | "error",
 ): "info" | "warn" | "error" => (l === "debug" ? "info" : l);
@@ -352,6 +413,15 @@ const main = async (): Promise<void> => {
     };
     process.on("SIGINT", () => void shutdown());
     process.on("SIGTERM", () => void shutdown());
+    return;
+  }
+
+  if (sub === "pair") {
+    const relayUrlOverride = stringArg(args, "relay");
+    await runPair({
+      env,
+      ...(relayUrlOverride !== undefined ? { relayUrlOverride } : {}),
+    });
     return;
   }
 
