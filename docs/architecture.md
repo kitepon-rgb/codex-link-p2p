@@ -174,3 +174,17 @@ Phase 1-7 の実装で:
 - coturn は use-auth-secret 互換で Relay の HMAC 発行と同期、scripts/
   verify-turn-credential.sh で対称性検証.
 - npm 一発配布 (`@codex-link/host`) は Phase 9 で詰める.
+
+## 実機検証で判明した既知の応急処置 (2026-05-14)
+
+実機 iPhone (iOS 26.5、Wi-Fi/5G) と本番 Relay (`codex-link-p2p.kitepon.dynv6.net`) で
+E2E 通信を確認した時点で、暫定で凌いだ箇所を [BOOTSTRAP.md の TODO セクション](../BOOTSTRAP.md#todo--既知の応急処置-phase-9-完走後に判明)
+に集約している. 要点:
+
+- iOS の正規 QR pairing UI が未実装. 当面は手 paste + ファイル push.
+- Mac Host PeerManager が ICE-failed peer を自動 cleanup できず、stale peer が
+  新規接続を阻害する. 暫定対処は Mac Host プロセスの再起動.
+- iOS 各層に NSLog + file 出力の診断ログを埋め込んでいる. 本番には不要.
+
+これらは Phase 1-9 の主要設計 (Relay payload-blind / iPhone⇄Mac 直 DataChannel /
+DTLS-SRTP E2E) は変えずに、UX と運用の磨きに該当する.

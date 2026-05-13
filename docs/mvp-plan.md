@@ -87,6 +87,12 @@ Windows Host も同一 npm package を将来想定 (`apps/win-host/` で `peer.t
 
 ## MVP 後 (本リポジトリの将来)
 
+- **iOS QR pairing UI** (現状は手 paste / ファイル push の dev-only. 2026-05-14 実機検証で
+  Universal Clipboard 非同期事故が頻発. [BOOTSTRAP.md TODO](../BOOTSTRAP.md#ios--pairing-ux))
+- **Mac Host PeerManager の stale peer 自動 cleanup**
+  (ICE-failed が長時間続く peer の自動 close、`signaling_welcome` 再受信時の peer 全消去.
+  [BOOTSTRAP.md TODO](../BOOTSTRAP.md#mac-host--peer-の自動-cleanup))
+- iOS 診断ログ (`diag` / `fwDiag` / `pcDiag` / `sigClientLog`) の `#if DEBUG` ガード or 削除
 - AppleStore 配布対応 (Bundle ID 本番化、Live Activity 互換、配布証明書、プライバシー方針)
 - Windows Host の正式追加 (`apps/win-host/`)
 - Relay state の永続化

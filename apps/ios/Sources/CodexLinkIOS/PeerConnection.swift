@@ -14,7 +14,27 @@
 // - 接続経路 (host / srflx / relay) を candidate pair から導出
 
 import Foundation
+import OSLog
 import WebRTC
+
+private let log = Logger(subsystem: "dev.codexlink", category: "peer")
+
+private func pcDiag(_ msg: String) {
+    NSLog("[codex-link] %@", msg)
+    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    guard let path = docs?.appendingPathComponent("codex-link-debug.log") else { return }
+    let line = "\(Date().ISO8601Format()) [pc] \(msg)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if FileManager.default.fileExists(atPath: path.path) {
+        if let h = try? FileHandle(forWritingTo: path) {
+            defer { try? h.close() }
+            _ = try? h.seekToEnd()
+            try? h.write(contentsOf: data)
+        }
+    } else {
+        try? data.write(to: path)
+    }
+}
 
 public let kCodexLinkDataChannelLabel = "codex-link-session"
 
@@ -44,6 +64,8 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
     private var dataChannel: RTCDataChannel?
     private var iceServers: [RTCIceServer] = []
     private var dcDelegate: DataChannelDelegate?
+    private var pathPollTimer: Timer?
+    private var lastReportedPath: PeerConnectionPath = .connecting
 
     public override init() {
         RTCInitializeSSL()
@@ -57,7 +79,34 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
     }
 
     deinit {
+        pathPollTimer?.invalidate()
         pc?.close()
+    }
+
+    /// `RTCPeerConnection.statistics(...)` を 2s 周期で取って selected candidate
+    /// pair の type から経路を導出する. ICE state 変化 1 回だけだと nominated
+    /// 確定タイミングを取りこぼすので、明示的な polling にする.
+    /// (BOOTSTRAP.md は 5s 周期と言っていたが、UI 反応速度のため短めにした)
+    private func startPathPolling() {
+        pathPollTimer?.invalidate()
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.pollPath()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.pathPollTimer = timer
+    }
+
+    private func pollPath() {
+        guard let pc = pc else { return }
+        pc.statistics { [weak self] report in
+            guard let self = self else { return }
+            let path = self.derivePath(from: report)
+            // 同じ値の連投は抑える (UI 側 @Published の不必要な発火を防ぐ).
+            if path != self.lastReportedPath {
+                self.lastReportedPath = path
+                self.delegate?.peer(self, didChangePath: path)
+            }
+        }
     }
 
     public func setIceServers(stunUrls: [String], turn: TurnCredential?) {
@@ -78,6 +127,7 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
     // ===== Offerer lifecycle =====
 
     public func startOffer() {
+        pcDiag("startOffer: building RTCPeerConnection with \(iceServers.count) ice servers")
         let config = RTCConfiguration()
         config.iceServers = iceServers
         config.sdpSemantics = .unifiedPlan
@@ -85,10 +135,13 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
 
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let pc = factory.peerConnection(with: config, constraints: constraints, delegate: self) else {
+            pcDiag("factory.peerConnection returned nil")
             delegate?.peer(self, didReportError: PeerError.factoryFailed)
             return
         }
+        pcDiag("RTCPeerConnection created")
         self.pc = pc
+        startPathPolling()
 
         // DataChannel を作る (offerer 側で作成).
         let dcConfig = RTCDataChannelConfiguration()
@@ -101,19 +154,27 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
         }
 
         // offer 生成.
+        pcDiag("calling pc.offer()")
         pc.offer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { [weak self] sdp, err in
             guard let self = self else { return }
             if let err = err {
+                pcDiag("pc.offer error: \(err.localizedDescription)")
                 self.delegate?.peer(self, didReportError: err)
                 return
             }
-            guard let sdp = sdp else { return }
+            guard let sdp = sdp else {
+                pcDiag("pc.offer returned nil sdp")
+                return
+            }
+            pcDiag("pc.offer succeeded, sdp len=\(sdp.sdp.count); calling setLocalDescription")
             pc.setLocalDescription(sdp) { [weak self] err in
                 guard let self = self else { return }
                 if let err = err {
+                    pcDiag("setLocalDescription error: \(err.localizedDescription)")
                     self.delegate?.peer(self, didReportError: err)
                     return
                 }
+                pcDiag("setLocalDescription ok; sending offer via signaling")
                 let sdpBase64 = Data(sdp.sdp.utf8).base64EncodedString()
                 self.delegate?.peer(self, didGenerateLocalSignal: .offer(sdpBase64: sdpBase64))
             }
@@ -160,6 +221,8 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
     }
 
     public func close() {
+        pathPollTimer?.invalidate()
+        pathPollTimer = nil
         dataChannel?.close()
         dataChannel = nil
         dcDelegate = nil
@@ -173,6 +236,7 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
 
     // ===== DataChannel delegate forwarder =====
     fileprivate func handleDataChannelOpen() {
+        NSLog("[codex-link] dc_open")
         delegate?.peer(self, didOpenDataChannel: ())
     }
 
@@ -208,6 +272,7 @@ extension PeerConnection: RTCPeerConnectionDelegate {
         case .count: mapped = .new
         @unknown default: mapped = .new
         }
+        NSLog("[codex-link] ice_state: %@", String(describing: mapped))
         delegate?.peer(self, didChangeState: mapped)
 
         // selected candidate pair から path を導出.
@@ -242,18 +307,25 @@ extension PeerConnection: RTCPeerConnectionDelegate {
     private func derivePath(from report: RTCStatisticsReport) -> PeerConnectionPath {
         // selected pair の candidate type を見て path を分類.
         let stats = report.statistics
-        // candidate-pair の selected 判定. 厳密には standard stats を辿るが、
-        // 簡易実装: nominated == true な pair の local/remote type を見る.
+        // candidate-pair の selected 判定. iOS の libwebrtc 版は selected pair
+        // を `state == "succeeded"` AND `nominated == true` で示す.
+        // `nominated` フラグ取りこぼし対策に `state == "succeeded"` も拾う.
         var selected: RTCStatistics? = nil
+        var fallback: RTCStatistics? = nil
         for (_, s) in stats {
-            if s.type == "candidate-pair" {
-                if let nominated = s.values["nominated"] as? Bool, nominated {
-                    selected = s
-                    break
-                }
+            guard s.type == "candidate-pair" else { continue }
+            let state = (s.values["state"] as? String) ?? ""
+            let nominated = (s.values["nominated"] as? Bool) ?? false
+            if state == "succeeded" && nominated {
+                selected = s
+                break
+            }
+            if state == "succeeded" {
+                fallback = s
             }
         }
-        guard let pair = selected,
+        let pair = selected ?? fallback
+        guard let pair = pair,
               let localId = pair.values["localCandidateId"] as? String,
               let remoteId = pair.values["remoteCandidateId"] as? String,
               let local = stats[localId],
@@ -278,6 +350,7 @@ private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unch
     }
 
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        NSLog("[codex-link] dc_state: %@", String(describing: dataChannel.readyState))
         if dataChannel.readyState == .open {
             parent?.handleDataChannelOpen()
         }

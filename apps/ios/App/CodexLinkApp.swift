@@ -20,7 +20,29 @@
 // プレフィックスで注入できる.
 
 import SwiftUI
+import UIKit
 import CodexLinkIOS
+
+/// 診断用: NSLog に出すと同時に Documents/codex-link-debug.log に追記.
+/// devicectl device copy from で取り出して解析する.
+func diag(_ message: String) {
+    NSLog("[codex-link] %@", message)
+    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    if let path = docs?.appendingPathComponent("codex-link-debug.log") {
+        let line = "\(Date().ISO8601Format()) \(message)\n"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path.path) {
+                if let h = try? FileHandle(forWritingTo: path) {
+                    defer { try? h.close() }
+                    _ = try? h.seekToEnd()
+                    try? h.write(contentsOf: data)
+                }
+            } else {
+                try? data.write(to: path)
+            }
+        }
+    }
+}
 
 @main
 struct CodexLinkApp: App {
@@ -38,22 +60,69 @@ struct ContentView: View {
     var body: some View {
         if let lifecycle {
             CodexLinkRootView(lifecycle: lifecycle, uiState: uiState)
+        } else if let fileLifecycle = AutoConnect.fromBundledPairFile() {
+            // Documents/codex-link-pair.json があれば onboarding を skip して
+            // それを使って auto-connect する. devicectl copy で push される.
+            CodexLinkRootView(lifecycle: fileLifecycle, uiState: uiState)
+                .onAppear {
+                    diag("ContentView onAppear: file-pair path")
+                    self.lifecycle = fileLifecycle
+                    fileLifecycle.start()
+                    diag("fileLifecycle.start() returned")
+                }
         } else if let envLifecycle = AutoConnect.fromEnvironment() {
             CodexLinkRootView(lifecycle: envLifecycle, uiState: uiState)
                 .onAppear {
+                    diag("ContentView onAppear: envLifecycle path")
                     self.lifecycle = envLifecycle
                     envLifecycle.start()
+                    diag("envLifecycle.start() returned")
                 }
         } else {
             OnboardingView { lc in
+                diag("ContentView onConnect callback received lifecycle")
                 self.lifecycle = lc
                 lc.start()
+                diag("lc.start() returned")
             }
         }
     }
 }
 
 private enum AutoConnect {
+    /// Documents/codex-link-pair.json があればそれから AppLifecycle を作る.
+    /// devicectl device copy to で push して使う.
+    @MainActor
+    static func fromBundledPairFile() -> AppLifecycle? {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        guard let path = docs?.appendingPathComponent("codex-link-pair.json"),
+              FileManager.default.fileExists(atPath: path.path),
+              let data = try? Data(contentsOf: path) else {
+            return nil
+        }
+        struct Payload: Decodable {
+            let relayUrl: String
+            let sessionToken: String
+            let userId: String
+            let deviceId: String
+            let hostId: String
+        }
+        guard let p = try? JSONDecoder().decode(Payload.self, from: data),
+              let url = URL(string: p.relayUrl),
+              !p.sessionToken.isEmpty, !p.userId.isEmpty, !p.deviceId.isEmpty, !p.hostId.isEmpty else {
+            diag("fromBundledPairFile: malformed pair JSON")
+            return nil
+        }
+        diag("fromBundledPairFile: building lifecycle with userId=\(p.userId.prefix(20))")
+        return AppLifecycle(
+            relayUrl: url,
+            sessionToken: p.sessionToken,
+            userId: UserId(p.userId),
+            deviceId: DeviceId(p.deviceId),
+            hostId: HostId(p.hostId)
+        )
+    }
+
     /// 環境変数が揃っていれば AppLifecycle を作って返す. 1 つでも欠けたら nil.
     @MainActor
     static func fromEnvironment() -> AppLifecycle? {
@@ -88,6 +157,39 @@ private struct OnboardingView: View {
     @State private var userId: String = ""
     @State private var deviceId: String = ""
     @State private var hostId: String = ""
+    @State private var pasteError: String?
+
+    /// クリップボードの JSON で 5 フィールドを一括埋めする (実機テスト用).
+    /// 期待する形式 (Mac 側 helper script `scripts/pair-to-clipboard.sh` で生成):
+    ///   {"relayUrl":"...","sessionToken":"...","userId":"...","deviceId":"...","hostId":"..."}
+    private func pasteFromClipboard() {
+        guard let text = UIPasteboard.general.string else {
+            pasteError = "Clipboard is empty"
+            return
+        }
+        guard let data = text.data(using: .utf8) else {
+            pasteError = "Invalid clipboard content"
+            return
+        }
+        struct Payload: Decodable {
+            let relayUrl: String?
+            let sessionToken: String
+            let userId: String
+            let deviceId: String
+            let hostId: String
+        }
+        do {
+            let p = try JSONDecoder().decode(Payload.self, from: data)
+            if let r = p.relayUrl, !r.isEmpty { self.relayUrl = r }
+            self.sessionToken = p.sessionToken
+            self.userId = p.userId
+            self.deviceId = p.deviceId
+            self.hostId = p.hostId
+            self.pasteError = nil
+        } catch {
+            pasteError = "Not a valid pairing JSON: \(error.localizedDescription)"
+        }
+    }
 
     var canConnect: Bool {
         URL(string: relayUrl) != nil
@@ -107,6 +209,16 @@ private struct OnboardingView: View {
                         .keyboardType(.URL)
                 }
                 Section("Pairing (Mac Host から)") {
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("Paste from Clipboard (JSON)", systemImage: "doc.on.clipboard")
+                    }
+                    if let pasteError {
+                        Text(pasteError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                     TextField("Session token", text: $sessionToken)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -122,7 +234,11 @@ private struct OnboardingView: View {
                 }
                 Section {
                     Button("Connect") {
-                        guard let url = URL(string: relayUrl) else { return }
+                        diag("Connect tapped, relayUrl=\(relayUrl), userId=\(userId.prefix(20))")
+                        guard let url = URL(string: relayUrl) else {
+                            diag("URL parse FAILED for \(relayUrl)")
+                            return
+                        }
                         let lc = AppLifecycle(
                             relayUrl: url,
                             sessionToken: sessionToken,
@@ -130,6 +246,7 @@ private struct OnboardingView: View {
                             deviceId: DeviceId(deviceId),
                             hostId: HostId(hostId)
                         )
+                        diag("AppLifecycle created, calling onConnect")
                         onConnect(lc)
                     }
                     .disabled(!canConnect)

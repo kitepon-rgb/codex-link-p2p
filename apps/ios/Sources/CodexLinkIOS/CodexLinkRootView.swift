@@ -40,34 +40,45 @@ public struct CodexLinkRootView: View {
         HStack(spacing: 12) {
             Text("Codex Link").font(.headline)
             Spacer()
-            phaseLabel
             pathBadge
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
-    private var phaseLabel: some View {
-        let text: String
-        switch lifecycle.phase {
-        case .idle: text = "idle"
-        case .signalingConnecting: text = "signaling…"
-        case .signalingOpen: text = "signaling open"
-        case .awaitingTurnCredential: text = "turn…"
-        case .peerOffering: text = "offering…"
-        case .peerConnecting: text = "ice…"
-        case .peerOpen: text = "open"
-        case .error(let m): text = "err: \(m)"
-        }
-        return Text(text).font(.caption).foregroundColor(.secondary)
-    }
-
+    /// バッジは「ユーザーから見て今どうか」だけ表示する.
+    /// - phase が error → 赤 "エラー"
+    /// - phase が peerOpen (= DataChannel open) → 経路詳細 (連速/中継) があれば
+    ///   それを出す. なければ「接続済」をデフォルトで出す.
+    /// - それ以外 (= signaling / ICE 中) → "接続中…".
     private var pathBadge: some View {
-        Text(uiState.badgeText(for: uiState.connectionPath))
+        let (text, color): (String, Color) = {
+            if case .error = lifecycle.phase {
+                return ("エラー", .red)
+            }
+            guard case .peerOpen = lifecycle.phase else {
+                return ("接続中…", .gray)
+            }
+            // phase = peerOpen: DataChannel 確実に開いてる. path 判定が間に合って
+            // いれば詳細、間に合ってなければ「接続済」.
+            switch lifecycle.connectionPath {
+            case .connecting:
+                return ("接続済", .green)
+            case .direct:
+                return ("直結", .green)
+            case .stunReflexive:
+                return ("直結 (NAT越え)", .green)
+            case .turnRelayed:
+                return ("中継", .yellow)
+            case .failed:
+                return ("切断", .red)
+            }
+        }()
+        return Text(text)
             .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(uiState.badgeColor(for: uiState.connectionPath).opacity(0.3))
+            .background(color.opacity(0.3))
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 

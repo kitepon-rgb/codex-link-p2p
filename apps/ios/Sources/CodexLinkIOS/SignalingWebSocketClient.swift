@@ -12,6 +12,23 @@
 
 import Foundation
 
+private func sigClientLog(_ msg: String) {
+    NSLog("[codex-link] %@", msg)
+    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    guard let path = docs?.appendingPathComponent("codex-link-debug.log") else { return }
+    let line = "\(Date().ISO8601Format()) [sig] \(msg)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if FileManager.default.fileExists(atPath: path.path) {
+        if let h = try? FileHandle(forWritingTo: path) {
+            defer { try? h.close() }
+            _ = try? h.seekToEnd()
+            try? h.write(contentsOf: data)
+        }
+    } else {
+        try? data.write(to: path)
+    }
+}
+
 public enum SignalingClientState: Sendable {
     case idle, connecting, open, reconnecting, closed
 }
@@ -59,9 +76,13 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
     public var currentState: SignalingClientState { state }
 
     public func start() {
+        NSLog("[codex-link] SignalingClient.start() called, relayUrl=%@", relayUrl.absoluteString)
         queue.async { [weak self] in
             guard let self = self else { return }
-            guard self.state == .idle || self.state == .closed else { return }
+            guard self.state == .idle || self.state == .closed else {
+                NSLog("[codex-link] start() ignored, state=%@", String(describing: self.state))
+                return
+            }
             self.intentionallyClosed = false
             self.connect()
         }
@@ -89,15 +110,32 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
 
     public func send(_ message: WsInbound) {
         let encoder = JSONEncoder()
-        guard let data = try? encoder.encode(message) else { return }
+        let data: Data
+        do {
+            data = try encoder.encode(message)
+        } catch {
+            NSLog("[codex-link] send encode FAILED: %@", error.localizedDescription)
+            sigClientLog("send encode FAILED: \(error.localizedDescription)")
+            return
+        }
+        let preview = String(data: data.prefix(200), encoding: .utf8) ?? "<binary>"
+        sigClientLog("send (\(data.count) bytes): \(preview)")
         queue.async { [weak self] in
             guard let self = self else { return }
             guard let task = self.task, self.state == .open else {
+                sigClientLog("send queued (state=\(self.state), task=\(self.task != nil))")
                 self.pendingSends.append(data)
                 return
             }
-            let msg = URLSessionWebSocketTask.Message.data(data)
-            task.send(msg) { _ in /* errors surface via close */ }
+            // Send as TEXT frame, not binary.  Relay (Node `ws`) parses
+            // incoming WS messages as JSON text; binary frames are dropped.
+            let text = String(data: data, encoding: .utf8) ?? ""
+            let msg = URLSessionWebSocketTask.Message.string(text)
+            task.send(msg) { err in
+                if let err = err {
+                    sigClientLog("WS send err: \(err.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -109,6 +147,7 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
         if !url.absoluteString.hasSuffix("/api/relay") {
             url = url.appendingPathComponent("/api/relay")
         }
+        NSLog("[codex-link] connect() opening WS to %@", url.absoluteString)
         var req = URLRequest(url: url)
         req.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
         let t = session.webSocketTask(with: req)
@@ -126,6 +165,7 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
             self.queue.async {
                 switch result {
                 case .success(let message):
+                    NSLog("[codex-link] WS received message")
                     if self.state != .open {
                         self.reconnectAttempts = 0
                         self.setState(.open)
@@ -134,6 +174,7 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
                     self.handleIncoming(message)
                     self.readNext(task: task)
                 case .failure(let err):
+                    NSLog("[codex-link] WS failure: %@", err.localizedDescription)
                     if self.intentionallyClosed {
                         self.setState(.closed)
                         return
