@@ -11,14 +11,13 @@ let package = Package(
         .library(name: "CodexLinkIOS", targets: ["CodexLinkIOS"]),
     ],
     dependencies: [
-        // WebRTC は新セッションが Phase 4 で追加する。
-        // 想定: .package(url: "https://github.com/stasel/WebRTC.git", from: "120.0.0"),
+        .package(url: "https://github.com/stasel/WebRTC.git", from: "120.0.0"),
     ],
     targets: [
         .target(
             name: "CodexLinkIOS",
             dependencies: [
-                // .product(name: "WebRTC", package: "WebRTC"),
+                .product(name: "WebRTC", package: "WebRTC"),
             ]
         ),
         .testTarget(
