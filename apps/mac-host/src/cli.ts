@@ -15,6 +15,9 @@
 //                        --display-name "kite Mac"
 //   codex-link-host start
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import {
   DEFAULT_RELAY_URL,
   loadHostConfig,
@@ -365,10 +368,19 @@ const stringArg = (
 };
 
 // CLI entry detection (avoid running on import).
+//
+// `npm i -g @codex-link/host` で入れた場合は bin shim 経由 (= argv[1] が
+// `.../node_modules/.bin/codex-link-host` の symlink) で起動される.
+// したがって拡張子サフィックス判定ではなく、symlink を解決した上で
+// 自分自身 (import.meta.url の realpath) と一致するかで判定する.
 const isMain = (): boolean => {
-  const arg = process.argv[1];
-  if (typeof arg !== "string") return false;
-  return arg.endsWith("cli.js") || arg.endsWith("cli.ts");
+  const a1 = process.argv[1];
+  if (typeof a1 !== "string") return false;
+  try {
+    return realpathSync(a1) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 };
 
 if (isMain()) {
