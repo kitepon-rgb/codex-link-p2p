@@ -12,6 +12,8 @@ dist/
 # Swift / Xcode
 .build/
 .swiftpm/
+# XcodeGen が生成する xcodeproj は checked-in しない (project.yml が source of truth).
+apps/ios/CodexLink.xcodeproj/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcworkspace/xcuserdata/

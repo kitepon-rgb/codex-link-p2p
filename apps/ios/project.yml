@@ -1,0 +1,89 @@
+# XcodeGen project spec for the iOS app target.
+#
+# 使い方:
+#   brew install xcodegen
+#   cd apps/ios
+#   xcodegen generate
+#   open CodexLink.xcodeproj
+#
+# CodexLinkIOS は SwiftPM library (../Package.swift). この project はそれを
+# 依存として参照し、SwiftUI App エントリ (App/CodexLinkApp.swift) と Info.plist
+# だけ持つ薄い wrapper.
+#
+# Bundle ID は dev (個人 Team) を既定. AppStore 提出時は本番 ID に切替.
+
+name: CodexLink
+options:
+  bundleIdPrefix: dev.codexlink
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  defaultConfig: Debug
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: TPWX489GV4  # kite 個人 Team. AppStore 提出時に差し替え.
+    CODE_SIGN_STYLE: Automatic
+
+packages:
+  CodexLinkIOS:
+    path: .
+
+targets:
+  CodexLinkApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    resources:
+      - path: Resources
+        optional: true
+    dependencies:
+      - package: CodexLinkIOS
+        product: CodexLinkIOS
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Codex Link
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen:
+          UIColorName: AccentColor
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSCameraUsageDescription: "QR code scanning (Mac Host との pairing で使用)"
+        CodexLinkRelayURL: "https://codex-link.kitepon.dynv6.net"
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.codexlink.ios
+        TARGETED_DEVICE_FAMILY: "1,2"  # iPhone + iPad
+        ENABLE_PREVIEWS: YES
+        GENERATE_INFOPLIST_FILE: NO
+
+schemes:
+  CodexLinkApp:
+    build:
+      targets:
+        CodexLinkApp: all
+    run:
+      config: Debug
+      environmentVariables:
+        # Simulator 開発時はローカル Relay を使いたい場合に上書き.
+        # Xcode の scheme editor から ON/OFF できる.
+        CODEX_LINK_RELAY_URL: http://127.0.0.1:3000
+    test:
+      config: Debug
+    archive:
+      config: Release

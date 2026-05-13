@@ -1,0 +1,58 @@
+# codex-link-p2p Caddy config.
+#
+# 役割:
+#   1. codex-link.kitepon.dynv6.net  → 内部 relay:3000 への HTTPS + WSS 終端
+#   2. codex-link-turn.kitepon.dynv6.net  → ACME で証明書だけ発行 (HTTP は 404)
+#      coturn が共有 volume 経由で同じ cert / key を読みに行く.
+#
+# ACME 発行物の path (Docker volume `caddy_data` 内):
+#   /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<DOMAIN>/<DOMAIN>.{crt,key}
+
+{
+	# サーバ管理者宛のメール (Let's Encrypt 通知用).
+	email kitepon@gmail.com
+}
+
+# === Relay (HTTPS + WSS reverse proxy) ===
+codex-link.kitepon.dynv6.net {
+	encode zstd gzip
+
+	# WebSocket 用 upgrade ヘッダーをそのまま通す.
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websocket relay:3000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# 通常 HTTP リクエスト (rest, health, bootstrap, signaling 以外).
+	reverse_proxy relay:3000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# 軽い security headers.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# === TURN 用 cert 発行のみ ===
+# coturn は別途 host network で直接 3478/5349 を listen する.
+# Caddy はこのドメインに対して ACME で cert を取得し、coturn がそれを共有.
+codex-link-turn.kitepon.dynv6.net {
+	respond "codex-link-p2p coturn cert holder" 404
+	log {
+		output discard
+	}
+}
