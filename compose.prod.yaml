@@ -17,8 +17,8 @@
 #   codex-link-p2p.kitepon.dynv6.net {
 #     encode zstd gzip
 #     @ws { header Connection *Upgrade*; header Upgrade websocket }
-#     reverse_proxy @ws 192.168.1.2:13000 { flush_interval -1 }
-#     reverse_proxy 192.168.1.2:13000 { flush_interval -1 }
+#     reverse_proxy @ws 192.168.1.2:48080 { flush_interval -1 }
+#     reverse_proxy 192.168.1.2:48080 { flush_interval -1 }
 #     header {
 #       Strict-Transport-Security "max-age=31536000; includeSubDomains"
 #       X-Content-Type-Options "nosniff"
@@ -41,8 +41,9 @@ services:
       TURN_URLS: stun:stun.l.google.com:19302,turn:codex-link-p2p.kitepon.dynv6.net:3478,turns:codex-link-p2p.kitepon.dynv6.net:5349
     # 既存 Caddy (license-server_default network) が同居サーバの LAN IP 越しに
     # 到達できるよう、host の LAN IP に bind する (localhost ではなく).
-    ports: !reset
-      - "192.168.1.2:13000:3000"
+    # `!override` で base compose.yaml の `127.0.0.1:3000:3000` を置き換える.
+    ports: !override
+      - "192.168.1.2:48080:3000"
     restart: unless-stopped
 
   coturn:
