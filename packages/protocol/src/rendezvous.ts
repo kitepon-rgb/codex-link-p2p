@@ -134,10 +134,26 @@ export type RtcSignal =
 // SignalEnvelope: Relay-visible 包み。Relay は中身の signal の payload を
 // 読まない。`from*` / `to*` の routing メタ情報と sentAt だけが Relay の
 // 見える範囲。
-export interface SignalEnvelope {
+//
+// 方向は 2 種類:
+// - client (iPhone) → Host: ClientToHostSignalEnvelope (alias: SignalEnvelope, 後方互換)
+// - Host → client: HostSignalReply (Host が answer や ICE を特定 iPhone に返す)
+
+export interface ClientToHostSignalEnvelope {
   readonly fromUserId: UserId;
   readonly fromDeviceId: DeviceId;
   readonly toHostId: HostId;
+  readonly signal: RtcSignal;
+  readonly sentAt: number;
+}
+
+// 後方互換 alias.
+export type SignalEnvelope = ClientToHostSignalEnvelope;
+
+export interface HostSignalReply {
+  readonly fromHostId: HostId;
+  readonly toUserId: UserId;
+  readonly toDeviceId: DeviceId;
   readonly signal: RtcSignal;
   readonly sentAt: number;
 }

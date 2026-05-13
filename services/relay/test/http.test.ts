@@ -39,12 +39,12 @@ beforeEach(async () => {
   state = createRelayState();
   config = loadConfig({ env });
   clockMs = 1_700_000_000_000;
-  const server = createRelayServer({
+  const created = createRelayServer({
     state,
     config,
     now: () => clockMs,
   });
-  started = await startRelayServer(server, "127.0.0.1", 0);
+  started = await startRelayServer(created, "127.0.0.1", 0);
   baseUrl = `http://127.0.0.1:${started.port}`;
 });
 

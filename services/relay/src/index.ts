@@ -21,4 +21,12 @@ export * from "./relay.js";
 export * from "./turn.js";
 export * from "./signaling.js";
 export * from "./http.js";
-export { createRelayServer, startRelayServer, type StartedServer, type CreateRelayServerInput } from "./server.js";
+export * from "./ws-messages.js";
+export * from "./websocket.js";
+export {
+  createRelayServer,
+  startRelayServer,
+  type StartedServer,
+  type CreateRelayServerInput,
+  type CreatedRelayServer,
+} from "./server.js";
