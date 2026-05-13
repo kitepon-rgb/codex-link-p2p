@@ -20,10 +20,13 @@
   },
   "dependencies": {
     "@codex-link/codex-client": "workspace:*",
-    "@codex-link/protocol": "workspace:*"
+    "@codex-link/protocol": "workspace:*",
+    "ws": "^8"
   },
   "devDependencies": {
+    "@codex-link/relay": "workspace:^",
     "@types/node": "^20",
+    "@types/ws": "^8",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

@@ -26,10 +26,19 @@ importers:
       '@codex-link/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      ws:
+        specifier: ^8
+        version: 8.20.1
     devDependencies:
+      '@codex-link/relay':
+        specifier: workspace:^
+        version: link:../../services/relay
       '@types/node':
         specifier: ^20
         version: 20.19.41
+      '@types/ws':
+        specifier: ^8
+        version: 8.18.1
       tsx:
         specifier: ^4.19.0
         version: 4.21.0

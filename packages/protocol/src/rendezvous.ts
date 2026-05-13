@@ -176,3 +176,97 @@ export interface HostPresenceOffline {
 }
 
 export type HostPresence = HostPresenceOnline | HostPresenceOffline;
+
+// ===== WebSocket wire messages =====
+//
+// Relay ↔ client/Host が話す JSON フレーム. すべて discriminated union by `type`.
+// CodexLinkEvent / session 関連は **ここに含めない** (DataChannel 専用).
+//
+// 同形を iOS / Mac Host / Relay の 3 者が共有するため、rendezvous の一部として
+// この protocol module に置く.
+
+// ----- Inbound (client / Host → Relay) -----
+
+export interface InboundSignalToHost {
+  readonly type: "signal.to_host";
+  readonly hostId: HostId;
+  readonly signal: RtcSignal;
+  readonly sentAt: number;
+}
+
+export interface InboundSignalToClient {
+  readonly type: "signal.to_client";
+  readonly toUserId: UserId;
+  readonly toDeviceId: DeviceId;
+  readonly hostId: HostId;
+  readonly signal: RtcSignal;
+  readonly sentAt: number;
+}
+
+export interface InboundTurnCredentialRequest {
+  readonly type: "turn.credential.request";
+  readonly hostId: HostId;
+}
+
+export interface InboundPairingCodeCreate {
+  readonly type: "pairing_code.create";
+  readonly hostId: HostId;
+}
+
+export interface InboundHostAnnounce {
+  readonly type: "host.announce";
+  readonly hostId: HostId;
+}
+
+export type WsInbound =
+  | InboundSignalToHost
+  | InboundSignalToClient
+  | InboundTurnCredentialRequest
+  | InboundPairingCodeCreate
+  | InboundHostAnnounce;
+
+// ----- Outbound (Relay → client / Host) -----
+
+export interface OutboundSignalFromClient {
+  readonly type: "signal.from_client";
+  readonly envelope: ClientToHostSignalEnvelope;
+}
+
+export interface OutboundSignalFromHost {
+  readonly type: "signal.from_host";
+  readonly reply: HostSignalReply;
+}
+
+export interface OutboundTurnCredentialIssued {
+  readonly type: "turn.credential.issued";
+  readonly credential: TurnCredential;
+  readonly hostId: HostId;
+}
+
+export interface OutboundPairingCodeIssued {
+  readonly type: "pairing_code.issued";
+  readonly code: string;
+  readonly expiresAt: number;
+  readonly hostId: HostId;
+}
+
+export interface OutboundError {
+  readonly type: "error";
+  readonly code: string;
+  readonly message: string;
+  readonly correlationType?: string;
+}
+
+export interface OutboundWelcome {
+  readonly type: "welcome";
+  readonly userId: UserId;
+  readonly deviceId: DeviceId;
+}
+
+export type WsOutbound =
+  | OutboundSignalFromClient
+  | OutboundSignalFromHost
+  | OutboundTurnCredentialIssued
+  | OutboundPairingCodeIssued
+  | OutboundError
+  | OutboundWelcome;
