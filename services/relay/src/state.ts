@@ -53,6 +53,8 @@ export type AuditEventKind =
   | "signal.delivered_from_buffer"
   | "signal.expired"
   | "signal.dropped_no_access"
+  | "signal.dropped_identity_mismatch"
+  | "signal.rate_limited"
   | "turn.credential.issued"
   | "turn.credential.rate_limited";
 
@@ -92,6 +94,9 @@ export interface TurnIssuanceWindow {
   readonly recent: number[]; // timestamps in ms; sorted ascending
 }
 
+// 同形のウィンドウを signal forwarding rate limit 用にも使う.
+export type SignalForwardIssuanceWindow = TurnIssuanceWindow;
+
 // ===== HostAccess key =====
 //
 // HostAccess を (hostId, userId) の組で引きたいので、Map のキー形式を
@@ -113,6 +118,7 @@ export interface RelayState {
   pairingCodes: Map<HostId, HostPairingCode>; // 1 active code per host
   pendingSignals: Map<HostId, PendingSignal[]>;
   turnCredentialIssuance: Map<UserId, TurnIssuanceWindow>;
+  signalForwardIssuance: Map<UserId, SignalForwardIssuanceWindow>;
   auditEvents: AuditEvent[]; // bounded by config.auditMaxEvents
 }
 
@@ -125,6 +131,7 @@ export const createRelayState = (): RelayState => ({
   pairingCodes: new Map(),
   pendingSignals: new Map(),
   turnCredentialIssuance: new Map(),
+  signalForwardIssuance: new Map(),
   auditEvents: [],
 });
 
@@ -280,5 +287,39 @@ export const peekTurnRateLimit = ({
     return { userId, recentCount: 0 };
   }
   state.turnCredentialIssuance.set(userId, { userId, recent: kept });
+  return { userId, recentCount: kept.length };
+};
+
+// ===== Signal forwarding rate-limit (同形) =====
+
+export const recordSignalForwardIssuance = ({
+  state,
+  userId,
+  now,
+  windowMs,
+}: RecordTurnIssuanceInput): TurnRateLimitSnapshot => {
+  const existing = state.signalForwardIssuance.get(userId);
+  const cutoff = now - windowMs;
+  const kept = (existing?.recent ?? []).filter((t) => t >= cutoff);
+  kept.push(now);
+  state.signalForwardIssuance.set(userId, { userId, recent: kept });
+  return { userId, recentCount: kept.length };
+};
+
+export const peekSignalForwardRateLimit = ({
+  state,
+  userId,
+  now,
+  windowMs,
+}: PeekTurnRateLimitInput): TurnRateLimitSnapshot => {
+  const existing = state.signalForwardIssuance.get(userId);
+  if (existing === undefined) return { userId, recentCount: 0 };
+  const cutoff = now - windowMs;
+  const kept = existing.recent.filter((t) => t >= cutoff);
+  if (kept.length === 0) {
+    state.signalForwardIssuance.delete(userId);
+    return { userId, recentCount: 0 };
+  }
+  state.signalForwardIssuance.set(userId, { userId, recent: kept });
   return { userId, recentCount: kept.length };
 };
