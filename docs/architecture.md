@@ -147,6 +147,30 @@ MVP では Relay と coturn を kite サーバー (`kitepon.dynv6.net`) に Dock
 
 ## Relay 状態の前提
 
-現 MVP の Relay は in-memory のみ (optional state snapshot あり)。コンテナ再起動 = 全 device session / HostAccess / pairing code 喪失。iPhone 側は起動時の `revalidateDeviceSession` で 401 を検知したら fresh register に倒す自動リカバリを持つが、HostAccess は復旧不能なので **Relay 再起動後はユーザーに QR 再 pair を要求**する。
+現 MVP の Relay は in-memory のみ (optional state snapshot は MVP 後)。
+コンテナ再起動 = 全 device session / HostAccess / pairing code 喪失。
+iPhone / Mac Host 側は起動時に session token を再 validate し、401 を検知したら
+fresh register に倒す自動リカバリを持つが、HostAccess は復旧不能なので
+**Relay 再起動後はユーザーに QR 再 pair を要求**する。
 
-Phase X (MVP 後) で state 永続化を入れる。
+Phase X (MVP 後) で state 永続化と TURN credential / device token のローテーション
+を入れる。
+
+## 実装状態 (MVP)
+
+Phase 1-7 の実装で:
+- protocol (TS) と CodexLinkIOS (Swift) の wire 互換は WireCompatibilityTests
+  で検証済み.
+- Relay の HTTP/WS endpoint は services/relay/test の 105 本でカバー
+  (payload-blind 不変条件含む).
+- Mac Host は signaling-client / peer (node-datachannel answerer) /
+  session (Codex event normalize → DataChannel broadcast) を実装し、
+  in-process E2E (apps/mac-host/test/e2e-flow.test.ts) が DataChannel 双方向
+  疎通まで通っている.
+- iOS は SignalingWebSocketClient (URLSession WS) + PeerConnection
+  (WebRTC.framework, offerer 固定) + SessionProjection + AppLifecycle まで
+  完成。connection path (direct/srflx/relay) も candidate-pair stats から
+  算出して UI バッジに反映.
+- coturn は use-auth-secret 互換で Relay の HMAC 発行と同期、scripts/
+  verify-turn-credential.sh で対称性検証.
+- npm 一発配布 (`@codex-link/host`) は Phase 9 で詰める.
