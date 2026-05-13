@@ -54,7 +54,7 @@ package ごと:
 ```bash
 pnpm --filter @codex-link/relay test
 pnpm --filter @codex-link/relay typecheck
-pnpm --filter @codex-link/mac-host start -- ~/.codex-link-p2p/host.json
+pnpm --filter @codex-link/host start -- ~/.codex-link-p2p/host.json
 ```
 
 ローカル Relay + coturn (Docker Compose):

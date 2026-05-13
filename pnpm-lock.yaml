@@ -20,11 +20,8 @@ importers:
 
   apps/mac-host:
     dependencies:
-      '@codex-link/codex-client':
-        specifier: workspace:*
-        version: link:../../packages/codex-client
       '@codex-link/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/protocol
       node-datachannel:
         specifier: ^0.27

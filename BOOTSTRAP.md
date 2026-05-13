@@ -188,7 +188,7 @@ ICE servers (Mac Host / iPhone が peer 構築時に注入):
 ### Phase 6: E2E 流路化と統合テスト
 
 - `apps/mac-host/test/e2e-flow.test.ts`: signaling → peer 確立 → Codex event 流通の E2E
-- compose 起動 (`docker compose up --build relay coturn`) → Mac Host (`pnpm --filter @codex-link/mac-host start`) → iOS Simulator で iPhone app 起動 → QR pair → turn 発火
+- compose 起動 (`docker compose up --build relay coturn`) → Mac Host (`pnpm --filter @codex-link/host start`) → iOS Simulator で iPhone app 起動 → QR pair → turn 発火
 
 ### Phase 7: Connection path 可視化 UX
 

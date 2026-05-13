@@ -1,26 +1,49 @@
 {
-  "name": "@codex-link/mac-host",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@codex-link/host",
+  "version": "0.1.0",
+  "description": "Codex Link Host — runs on Mac/Win, brokers iPhone ⇄ local Codex over WebRTC DataChannel.",
+  "private": false,
   "type": "module",
   "bin": {
     "codex-link-host": "./dist/cli.js"
   },
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
     "dist/",
-    "scripts/",
     "README.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "build": "tsc -p tsconfig.build.json",
-    "start": "tsx src/cli.ts"
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "start": "tsx src/cli.ts",
+    "prepublishOnly": "pnpm build"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "keywords": [
+    "codex",
+    "webrtc",
+    "iphone",
+    "remote",
+    "rendezvous"
+  ],
+  "license": "MIT",
   "dependencies": {
-    "@codex-link/codex-client": "workspace:*",
-    "@codex-link/protocol": "workspace:*",
+    "@codex-link/protocol": "workspace:^",
     "node-datachannel": "^0.27",
     "ws": "^8"
   },

@@ -1,16 +1,47 @@
 {
   "name": "@codex-link/protocol",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Codex Link wire protocol — rendezvous (Relay-visible) and session (DataChannel-only) types.",
+  "private": false,
   "type": "module",
   "exports": {
     "./rendezvous": "./src/rendezvous.ts",
     "./session": "./src/session.ts"
   },
+  "publishConfig": {
+    "main": "./dist/rendezvous.js",
+    "types": "./dist/rendezvous.d.ts",
+    "exports": {
+      "./rendezvous": {
+        "types": "./dist/rendezvous.d.ts",
+        "default": "./dist/rendezvous.js"
+      },
+      "./session": {
+        "types": "./dist/session.d.ts",
+        "default": "./dist/session.js"
+      }
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm build"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "codex",
+    "webrtc",
+    "protocol",
+    "rendezvous"
+  ],
+  "license": "MIT",
   "devDependencies": {
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
