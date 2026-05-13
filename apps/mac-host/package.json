@@ -1,0 +1,30 @@
+{
+  "name": "@codex-link/mac-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codex-link-host": "./dist/cli.js"
+  },
+  "main": "./src/index.ts",
+  "files": [
+    "dist/",
+    "scripts/",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc",
+    "start": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@codex-link/protocol": "workspace:*",
+    "@codex-link/codex-client": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

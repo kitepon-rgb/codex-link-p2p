@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.tsbuildinfo
+*.tsbuildinfo
+
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+
+# Swift / Xcode
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserdatad/
+DerivedData/
+
+# Editor
+.vscode/
+.idea/
+
+# Local Relay state
+.codex-link-p2p/
+
+# Tooling
+.claude/

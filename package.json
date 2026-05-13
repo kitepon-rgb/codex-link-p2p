@@ -1,0 +1,21 @@
+{
+  "name": "codex-link-p2p",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "lint": "eslint ."
+  },
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "eslint": "^9",
+    "typescript": "^5.6",
+    "typescript-eslint": "^8"
+  }
+}

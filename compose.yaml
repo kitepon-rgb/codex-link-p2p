@@ -1,0 +1,25 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: services/relay/Dockerfile
+    environment:
+      CODEX_LINK_RELAY_URL: ${CODEX_LINK_RELAY_URL:-http://127.0.0.1:3000}
+      CODEX_LINK_HOST_BOOTSTRAP_TOKEN: ${CODEX_LINK_HOST_BOOTSTRAP_TOKEN:-codex-link-p2p-local-dev-bootstrap}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-local-dev-turn-secret}
+      TURN_REALM: ${TURN_REALM:-codex-link-p2p.local}
+      TURN_URLS: ${TURN_URLS:-stun:stun.l.google.com:19302,turn:127.0.0.1:3478}
+      TURN_CREDENTIAL_TTL_SEC: "300"
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:latest
+    network_mode: host
+    volumes:
+      - ./services/relay/turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    environment:
+      DETECT_EXTERNAL_IP: "yes"
+      DETECT_RELAY_IP: "yes"
+    restart: unless-stopped
