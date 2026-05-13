@@ -4,23 +4,38 @@ import { RelayConfigError, loadConfig } from "../src/config.js";
 
 const baseEnv = (overrides: Record<string, string | undefined> = {}) => ({
   TURN_SHARED_SECRET: "test-secret",
+  CODEX_LINK_HOST_BOOTSTRAP_TOKEN: "test-bootstrap",
   ...overrides,
 });
 
 describe("loadConfig", () => {
   it("throws when TURN_SHARED_SECRET is missing", () => {
-    expect(() => loadConfig({ env: {} })).toThrow(RelayConfigError);
+    expect(() =>
+      loadConfig({ env: { CODEX_LINK_HOST_BOOTSTRAP_TOKEN: "x" } }),
+    ).toThrow(RelayConfigError);
+  });
+
+  it("throws when CODEX_LINK_HOST_BOOTSTRAP_TOKEN is missing", () => {
+    expect(() =>
+      loadConfig({ env: { TURN_SHARED_SECRET: "x" } }),
+    ).toThrow(/CODEX_LINK_HOST_BOOTSTRAP_TOKEN/);
   });
 
   it("throws when TURN_SHARED_SECRET is empty string", () => {
-    expect(() => loadConfig({ env: { TURN_SHARED_SECRET: "" } })).toThrow(
-      /required env var missing/,
-    );
+    expect(() =>
+      loadConfig({
+        env: {
+          TURN_SHARED_SECRET: "",
+          CODEX_LINK_HOST_BOOTSTRAP_TOKEN: "x",
+        },
+      }),
+    ).toThrow(/required env var missing/);
   });
 
-  it("returns sane defaults when only the required secret is set", () => {
+  it("returns sane defaults when only the required envs are set", () => {
     const cfg = loadConfig({ env: baseEnv() });
     expect(cfg.turnSharedSecret).toBe("test-secret");
+    expect(cfg.hostBootstrapToken).toBe("test-bootstrap");
     expect(cfg.relayUrl).toBe("http://127.0.0.1:3000");
     expect(cfg.bindHost).toBe("0.0.0.0");
     expect(cfg.port).toBe(3000);
@@ -28,6 +43,7 @@ describe("loadConfig", () => {
     expect(cfg.turnRealm).toBe("codex-link-p2p.local");
     expect(cfg.turnCredentialTtlSec).toBe(300);
     expect(cfg.pendingSignalTtlMs).toBe(30_000);
+    expect(cfg.pairingCodeTtlMs).toBe(10 * 60 * 1000);
     expect(cfg.maxHttpBodyBytes).toBe(64 * 1024);
     expect(cfg.maxWebsocketPayloadBytes).toBe(128 * 1024);
     expect(cfg.rateLimit.turnCredentialPerMinute).toBe(30);

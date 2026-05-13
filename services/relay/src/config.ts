@@ -17,8 +17,10 @@ export interface RelayConfig {
   readonly maxHttpBodyBytes: number;
   readonly maxWebsocketPayloadBytes: number;
   readonly pendingSignalTtlMs: number;
+  readonly pairingCodeTtlMs: number;
   readonly auditRetentionMs: number;
   readonly auditMaxEvents: number;
+  readonly hostBootstrapToken: string;
   readonly turnSharedSecret: string;
   readonly turnRealm: string;
   readonly turnUrls: readonly string[];
@@ -102,6 +104,7 @@ const parseTurnUrls = (raw: string): readonly string[] => {
 
 export const loadConfig = ({ env }: LoadConfigOptions): RelayConfig => {
   const turnSharedSecret = requireEnv(env, "TURN_SHARED_SECRET");
+  const hostBootstrapToken = requireEnv(env, "CODEX_LINK_HOST_BOOTSTRAP_TOKEN");
   const turnRealm = env["TURN_REALM"] ?? "codex-link-p2p.local";
   const turnUrlsRaw =
     env["TURN_URLS"] ?? "stun:stun.l.google.com:19302";
@@ -127,12 +130,16 @@ export const loadConfig = ({ env }: LoadConfigOptions): RelayConfig => {
     pendingSignalTtlMs: optionalInt(env, "PENDING_SIGNAL_TTL_MS", 30_000, {
       min: 1_000,
     }),
+    pairingCodeTtlMs: optionalInt(env, "PAIRING_CODE_TTL_MS", 10 * 60 * 1000, {
+      min: 30_000,
+    }),
     auditRetentionMs: optionalInt(env, "AUDIT_RETENTION_MS", 60 * 60 * 1000, {
       min: 60_000,
     }),
     auditMaxEvents: optionalInt(env, "AUDIT_MAX_EVENTS", 10_000, {
       min: 100,
     }),
+    hostBootstrapToken,
     turnSharedSecret,
     turnRealm,
     turnUrls,

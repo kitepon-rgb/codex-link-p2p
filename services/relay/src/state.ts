@@ -20,6 +20,19 @@ import type {
   UserId,
 } from "@codex-link/protocol/rendezvous";
 
+// ===== Relay-internal records =====
+//
+// protocol の Device / Host は client / Host 両方が見える wire 型。
+// session token hash のような **Relay 内部のみが保つ** フィールドはここで
+// 拡張する (protocol 型に混ぜない).
+
+export interface DeviceRecord extends Device {
+  // Relay は token 本体を保存しない。SHA-256 hex hash のみ保管し、認証時に
+  // 受け取った token を hash して比較する。
+  readonly sessionTokenHash: string;
+  readonly revokedAt?: number;
+}
+
 // ===== Audit =====
 //
 // kind は signaling / pairing / TURN credential 発行に関するメタ情報のみ。
@@ -91,7 +104,10 @@ export const hostAccessKey = (hostId: HostId, userId: UserId): string =>
 
 export interface RelayState {
   users: Map<UserId, User>;
-  devices: Map<DeviceId, Device>;
+  devices: Map<DeviceId, DeviceRecord>;
+  // Secondary index: SHA-256 hex hash of session token → deviceId.
+  // 認証 header を受けた時に O(1) で device 引きする。
+  deviceTokenHashIndex: Map<string, DeviceId>;
   hosts: Map<HostId, Host>;
   hostAccess: Map<string, HostAccess>; // key = hostAccessKey(hostId, userId)
   pairingCodes: Map<HostId, HostPairingCode>; // 1 active code per host
@@ -103,6 +119,7 @@ export interface RelayState {
 export const createRelayState = (): RelayState => ({
   users: new Map(),
   devices: new Map(),
+  deviceTokenHashIndex: new Map(),
   hosts: new Map(),
   hostAccess: new Map(),
   pairingCodes: new Map(),
