@@ -20,3 +20,5 @@ export * from "./ids.js";
 export * from "./relay.js";
 export * from "./turn.js";
 export * from "./signaling.js";
+export * from "./http.js";
+export { createRelayServer, startRelayServer, type StartedServer, type CreateRelayServerInput } from "./server.js";
