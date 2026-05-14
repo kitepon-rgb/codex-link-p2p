@@ -5,101 +5,96 @@ import XCTest
 final class SessionProjectionTests: XCTestCase {
 
     let hostId = HostId("hst_t")
+    let projectId = ProjectId("p1")
     let threadId = ThreadId("t1")
+    let turnId = TurnId("tn1")
 
     func testApplyThreadStartedRegistersThread() {
         let p = SessionProjection()
-        p.apply(.event(.threadStarted(
-            seq: SequenceNumber(1), ts: 1, threadId: threadId, projectId: "p", title: "Hello"
-        )))
-        XCTAssertEqual(p.threads[threadId]?.title, "Hello")
-        XCTAssertEqual(p.orderedThreadIds, [threadId])
-        XCTAssertEqual(p.latestSequence, SequenceNumber(1))
+        p.apply(.threadStarted(thread: ThreadRef(id: threadId, projectId: projectId, title: "Hello")))
+        XCTAssertEqual(p.state.thread(threadId)?.title, "Hello")
+        XCTAssertEqual(p.state.orderedThreadIds(), [threadId])
     }
 
     func testAssistantDeltaThenFinalAggregatesIntoTranscript() {
         let p = SessionProjection()
-        p.apply(.event(.threadStarted(seq: SequenceNumber(1), ts: 1, threadId: threadId, projectId: "p", title: "Hi")))
-        p.apply(.event(.assistantDelta(seq: SequenceNumber(2), ts: 2, threadId: threadId, delta: "hello ")))
-        p.apply(.event(.assistantDelta(seq: SequenceNumber(3), ts: 3, threadId: threadId, delta: "world")))
-        XCTAssertEqual(p.threads[threadId]?.streamingAssistant, "hello world")
-        XCTAssertEqual(p.threads[threadId]?.transcript.count, 0)
+        p.apply(.threadStarted(thread: ThreadRef(id: threadId, projectId: projectId, title: "Hi")))
+        p.apply(.assistantDelta(threadId: threadId, turnId: turnId, text: "hello "))
+        p.apply(.assistantDelta(threadId: threadId, turnId: turnId, text: "world"))
+        XCTAssertEqual(p.state.streamingAssistant(for: threadId), "hello world")
+        XCTAssertEqual(p.state.transcript(for: threadId).count, 0)
 
-        p.apply(.event(.assistantFinal(seq: SequenceNumber(4), ts: 4, threadId: threadId, text: "hello world")))
-        XCTAssertEqual(p.threads[threadId]?.streamingAssistant, "")
-        XCTAssertEqual(p.threads[threadId]?.transcript.count, 1)
-        XCTAssertEqual(p.threads[threadId]?.transcript.first?.content, "hello world")
+        p.apply(.assistantFinal(
+            threadId: threadId,
+            turnId: turnId,
+            itemId: ItemId("i1"),
+            text: "hello world"
+        ))
+        XCTAssertEqual(p.state.streamingAssistant(for: threadId), "")
+        let tr = p.state.transcript(for: threadId)
+        XCTAssertEqual(tr.count, 1)
+        XCTAssertEqual(tr.first?.text, "hello world")
     }
 
-    func testTimelineStartedThenCompletedSetsOutcome() {
+    func testTimelineStartedThenCompletedSetsStatus() {
         let p = SessionProjection()
-        p.apply(.event(.timelineItemStarted(
-            seq: SequenceNumber(1), ts: 1, threadId: threadId,
-            itemId: "i1", kind: .toolCall, label: "shell"
-        )))
-        XCTAssertEqual(p.threads[threadId]?.timeline.first?.outcome, nil)
+        p.apply(.timelineItemStarted(
+            threadId: threadId, turnId: turnId, itemId: ItemId("i1"),
+            label: "shell", detail: nil
+        ))
+        let timeline = p.state.timeline(for: threadId)
+        XCTAssertEqual(timeline.first?.status, .running)
 
-        p.apply(.event(.timelineItemCompleted(
-            seq: SequenceNumber(2), ts: 2, threadId: threadId, itemId: "i1", outcome: .success
-        )))
-        XCTAssertEqual(p.threads[threadId]?.timeline.first?.outcome, .success)
+        p.apply(.timelineItemCompleted(
+            threadId: threadId, turnId: turnId, itemId: ItemId("i1"), status: .completed
+        ))
+        XCTAssertEqual(p.state.timeline(for: threadId).first?.status, .completed)
     }
 
     func testApprovalRequestedAndResolved() {
         let p = SessionProjection()
         let req = ApprovalRequest(
-            requestId: RequestId("r1"), threadId: threadId,
-            summary: "rm -rf", kind: .command, detail: ""
+            id: RequestId("r1"), kind: .commandExecution,
+            threadId: threadId, turnId: turnId, itemId: nil,
+            title: "rm -rf", detail: "",
+            availableDecisions: [.accept, .decline]
         )
-        p.apply(.event(.approvalRequested(seq: SequenceNumber(1), ts: 1, request: req)))
-        XCTAssertEqual(p.threads[threadId]?.pendingApproval?.requestId.rawValue, "r1")
-        p.apply(.event(.approvalResolved(
-            seq: SequenceNumber(2), ts: 2, threadId: threadId,
-            decision: ApprovalDecision(requestId: RequestId("r1"), approved: false)
-        )))
-        XCTAssertNil(p.threads[threadId]?.pendingApproval)
+        p.apply(.approvalRequested(request: req))
+        XCTAssertEqual(p.state.pendingApproval(for: threadId)?.id.rawValue, "r1")
+
+        p.apply(.approvalResolved(requestId: RequestId("r1"), decision: .decline))
+        XCTAssertNil(p.state.pendingApproval(for: threadId))
     }
 
     func testSnapshotResponseSeedsState() {
         let p = SessionProjection()
         let cap = HostCapabilities(hostId: hostId, platform: "macos", codexVersion: "1.0", supportsApprovals: true)
+        let thread = ThreadRef(id: threadId, projectId: projectId, title: "T")
         let proj = CodexLinkProjection(
             hostId: hostId,
+            account: nil,
             capabilities: cap,
-            projects: [ProjectDescriptor(id: "p", displayName: "P", path: "/")],
+            projects: [ProjectRef(id: projectId, hostId: hostId, name: "P", pathLabel: "/")],
             threads: [
                 ThreadProjection(
-                    threadId: threadId, title: "T", status: .idle,
-                    transcript: [TranscriptItem(id: "i", role: .user, content: "hi")],
-                    timeline: [], pendingApproval: nil
+                    thread: thread, status: .idle, currentTurnId: nil,
+                    transcript: [TranscriptItem(id: ItemId("i"), role: .user, text: "hi")],
+                    timeline: [], pendingApproval: nil,
+                    streamingAssistant: ""
                 )
             ],
-            latestSequence: SequenceNumber(42),
+            latestSequence: 42,
             capturedAt: 1
         )
-        p.apply(.snapshotResponse(SessionSnapshotResponse(projection: proj)))
-        XCTAssertEqual(p.hostId, hostId)
-        XCTAssertEqual(p.latestSequence, SequenceNumber(42))
-        XCTAssertEqual(p.threads[threadId]?.transcript.first?.content, "hi")
+        p.applySnapshot(proj)
+        XCTAssertEqual(p.state.hostId, hostId)
+        XCTAssertEqual(p.state.latestSequence, 42)
+        XCTAssertEqual(p.state.transcript(for: threadId).first?.text, "hi")
     }
 
-    func testErrorReportedSurfacedAsLastError() {
+    func testErrorReportedSurfacedAsLatestError() {
         let p = SessionProjection()
-        p.apply(.event(.errorReported(
-            seq: SequenceNumber(1), ts: 1, threadId: threadId, code: "boom", message: "msg"
-        )))
-        XCTAssertEqual(p.lastError?.code, "boom")
-        XCTAssertEqual(p.lastError?.threadId, threadId)
-    }
-
-    func testIgnoresHostBoundFrames() {
-        let p = SessionProjection()
-        // 入力方向ではない (iPhone は ui_action / snapshot_request を送る側). 受け取ってもクラッシュしないことだけ確認.
-        p.apply(.uiAction(.cancelTurn(threadId: threadId)))
-        p.apply(.ack(SequenceNumber(1)))
-        p.apply(.snapshotRequest(SessionSnapshotRequest(
-            fromUserId: UserId("u"), fromDeviceId: DeviceId("d"), hostId: hostId, lastSequence: nil
-        )))
-        XCTAssertTrue(p.threads.isEmpty)
+        p.apply(.errorReported(scope: "codex", message: "boom"))
+        XCTAssertEqual(p.state.latestError, "boom")
     }
 }

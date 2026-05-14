@@ -28,7 +28,7 @@ public struct CodexLinkRootView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let tid = selectedThreadId ?? lifecycle.projection.orderedThreadIds.first {
+            if let tid = selectedThreadId ?? lifecycle.projection.state.orderedThreadIds().first {
                 threadView(threadId: tid)
             } else {
                 placeholder
@@ -82,22 +82,25 @@ public struct CodexLinkRootView: View {
 
     @ViewBuilder
     private func threadView(threadId: ThreadId) -> some View {
-        if let thread = lifecycle.projection.threads[threadId] {
+        let state = lifecycle.projection.state
+        if let thread = state.thread(threadId) {
             VStack(spacing: 0) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(thread.transcript, id: \.id) { item in
+                        ForEach(state.transcript(for: threadId), id: \.id) { item in
                             transcriptRow(item: item)
                         }
-                        if !thread.streamingAssistant.isEmpty {
+                        let streaming = state.streamingAssistant(for: threadId)
+                        if !streaming.isEmpty,
+                           let streamingId = ItemId(rawValue: "streaming-\(threadId.rawValue)") {
                             transcriptRow(item: TranscriptItem(
-                                id: "streaming",
+                                id: streamingId,
                                 role: .assistant,
-                                content: thread.streamingAssistant
+                                text: streaming
                             ))
                             .opacity(0.6)
                         }
-                        if let pending = thread.pendingApproval {
+                        if let pending = state.pendingApproval(for: threadId) {
                             approvalCard(pending)
                         }
                     }
@@ -105,7 +108,7 @@ public struct CodexLinkRootView: View {
                     .padding(.top, 12)
                 }
                 Divider()
-                inputBar(threadId: threadId)
+                inputBar(thread: thread)
             }
         }
     }
@@ -117,7 +120,7 @@ public struct CodexLinkRootView: View {
                 .font(.caption2.bold())
                 .foregroundColor(.secondary)
                 .frame(width: 70, alignment: .leading)
-            Text(item.content)
+            Text(item.text)
                 .font(.body)
             Spacer(minLength: 0)
         }
@@ -126,19 +129,12 @@ public struct CodexLinkRootView: View {
     @ViewBuilder
     private func approvalCard(_ req: ApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Approval needed").font(.subheadline.bold())
-            Text(req.summary).font(.caption)
+            Text(req.title).font(.subheadline.bold())
+            Text(req.detail).font(.caption)
             HStack {
-                Button("Approve") {
-                    lifecycle.respondApproval(
-                        ApprovalDecision(requestId: req.requestId, approved: true)
-                    )
-                }.buttonStyle(.borderedProminent)
-                Button("Deny") {
-                    lifecycle.respondApproval(
-                        ApprovalDecision(requestId: req.requestId, approved: false)
-                    )
-                }.buttonStyle(.bordered)
+                ForEach(req.availableDecisions, id: \.self) { kind in
+                    approvalButton(req: req, kind: kind)
+                }
             }
         }
         .padding(8)
@@ -146,14 +142,43 @@ public struct CodexLinkRootView: View {
         .cornerRadius(8)
     }
 
-    private func inputBar(threadId: ThreadId) -> some View {
+    @ViewBuilder
+    private func approvalButton(req: ApprovalRequest, kind: ApprovalDecisionKind) -> some View {
+        let action: () -> Void = {
+            lifecycle.respondApproval(
+                ApprovalDecision(requestId: req.id, decision: kind)
+            )
+        }
+        if kind == .accept {
+            Button(decisionLabel(kind), action: action)
+                .buttonStyle(.borderedProminent)
+        } else {
+            Button(decisionLabel(kind), action: action)
+                .buttonStyle(.bordered)
+        }
+    }
+
+    private func decisionLabel(_ kind: ApprovalDecisionKind) -> String {
+        switch kind {
+        case .accept: return "Approve"
+        case .acceptForSession: return "Always allow"
+        case .decline: return "Deny"
+        case .cancel: return "Cancel"
+        }
+    }
+
+    private func inputBar(thread: ThreadRef) -> some View {
         HStack {
             TextField("Message…", text: $input)
                 .textFieldStyle(.roundedBorder)
             Button("Send") {
                 let trimmed = input.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.isEmpty else { return }
-                lifecycle.submitTurn(threadId: threadId, input: trimmed)
+                lifecycle.submitTurn(
+                    projectId: thread.projectId,
+                    threadId: thread.id,
+                    input: trimmed
+                )
                 input = ""
             }.disabled(input.isEmpty)
         }

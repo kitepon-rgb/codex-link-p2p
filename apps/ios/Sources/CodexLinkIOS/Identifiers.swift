@@ -58,7 +58,31 @@ public struct HostId: StringIdentifier {
     }
 }
 
+public struct ProjectId: StringIdentifier {
+    public let rawValue: String
+    public init?(rawValue: String) {
+        guard !rawValue.isEmpty else { return nil }
+        self.rawValue = rawValue
+    }
+}
+
 public struct ThreadId: StringIdentifier {
+    public let rawValue: String
+    public init?(rawValue: String) {
+        guard !rawValue.isEmpty else { return nil }
+        self.rawValue = rawValue
+    }
+}
+
+public struct TurnId: StringIdentifier {
+    public let rawValue: String
+    public init?(rawValue: String) {
+        guard !rawValue.isEmpty else { return nil }
+        self.rawValue = rawValue
+    }
+}
+
+public struct ItemId: StringIdentifier {
     public let rawValue: String
     public init?(rawValue: String) {
         guard !rawValue.isEmpty else { return nil }

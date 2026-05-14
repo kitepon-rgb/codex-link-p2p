@@ -111,16 +111,18 @@ final class WireCompatibilityTests: XCTestCase {
         XCTAssertEqual(obj?["hostId"] as? String, "hst_w")
     }
 
-    // ===== CodexLinkSessionFrame =====
+    // ===== CodexLinkSessionFrame (新 protocol: sequence/timestamp は frame 側) =====
 
     func testDecodeAssistantDeltaFrame() throws {
         let json = """
-        {"kind":"event","event":{"type":"assistant.delta","sequence":3,"timestamp":1700,"threadId":"t1","delta":"hello"}}
+        {"kind":"event","sequence":3,"timestamp":1700,"event":{"type":"assistant.delta","threadId":"t1","turnId":"tn1","text":"hello"}}
         """.data(using: .utf8)!
         let frame = try JSONDecoder().decode(CodexLinkSessionFrame.self, from: json)
-        if case .event(let e) = frame, case .assistantDelta(_, _, let tid, let delta) = e {
+        if case .event(let seq, _, let e) = frame,
+           case .assistantDelta(let tid, _, let text) = e {
+            XCTAssertEqual(seq, 3)
             XCTAssertEqual(tid.rawValue, "t1")
-            XCTAssertEqual(delta, "hello")
+            XCTAssertEqual(text, "hello")
         } else {
             XCTFail("expected event/assistantDelta")
         }
@@ -128,12 +130,13 @@ final class WireCompatibilityTests: XCTestCase {
 
     func testDecodeApprovalRequestedFrame() throws {
         let json = """
-        {"kind":"event","event":{"type":"approval.requested","sequence":1,"timestamp":1,"request":{"requestId":"r1","threadId":"t1","summary":"rm","kind":"command","detail":"d"}}}
+        {"kind":"event","sequence":1,"timestamp":1,"event":{"type":"approval.requested","request":{"id":"r1","threadId":"t1","turnId":"tn1","kind":"command_execution","title":"rm","detail":"d","availableDecisions":["accept","decline"]}}}
         """.data(using: .utf8)!
         let f = try JSONDecoder().decode(CodexLinkSessionFrame.self, from: json)
-        if case .event(let e) = f, case .approvalRequested(_, _, let req) = e {
-            XCTAssertEqual(req.kind, .command)
-            XCTAssertEqual(req.summary, "rm")
+        if case .event(_, _, let e) = f, case .approvalRequested(let req) = e {
+            XCTAssertEqual(req.kind, .commandExecution)
+            XCTAssertEqual(req.title, "rm")
+            XCTAssertTrue(req.availableDecisions.contains(.accept))
         } else {
             XCTFail("expected approvalRequested")
         }
@@ -141,13 +144,14 @@ final class WireCompatibilityTests: XCTestCase {
 
     func testEncodeUIActionSubmitTurn() throws {
         let frame = CodexLinkSessionFrame.uiAction(
-            .submitTurn(threadId: ThreadId("t1"), input: "do thing")
+            .submitTurn(projectId: ProjectId("p1"), threadId: ThreadId("t1"), input: "do thing")
         )
         let data = try JSONEncoder().encode(frame)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(obj?["kind"] as? String, "ui_action")
         let action = obj?["action"] as? [String: Any]
         XCTAssertEqual(action?["type"] as? String, "ui.submit_turn")
+        XCTAssertEqual(action?["projectId"] as? String, "p1")
         XCTAssertEqual(action?["threadId"] as? String, "t1")
         XCTAssertEqual(action?["input"] as? String, "do thing")
     }
@@ -155,10 +159,23 @@ final class WireCompatibilityTests: XCTestCase {
     func testSnapshotRequestRoundTrip() throws {
         let req = SessionSnapshotRequest(
             fromUserId: UserId("u"), fromDeviceId: DeviceId("d"),
-            hostId: HostId("h"), lastSequence: SequenceNumber(5)
+            hostId: HostId("h"), lastSequence: 5
         )
         let data = try JSONEncoder().encode(req)
         let back = try JSONDecoder().decode(SessionSnapshotRequest.self, from: data)
         XCTAssertEqual(back, req)
+    }
+
+    func testDecodeThreadStartedNewShape() throws {
+        let json = """
+        {"kind":"event","sequence":1,"timestamp":1,"event":{"type":"thread.started","thread":{"id":"th1","projectId":"p1","title":"Hi","updatedAt":null}}}
+        """.data(using: .utf8)!
+        let f = try JSONDecoder().decode(CodexLinkSessionFrame.self, from: json)
+        if case .event(_, _, let e) = f, case .threadStarted(let thread) = e {
+            XCTAssertEqual(thread.title, "Hi")
+            XCTAssertEqual(thread.projectId.rawValue, "p1")
+        } else {
+            XCTFail("expected threadStarted")
+        }
     }
 }

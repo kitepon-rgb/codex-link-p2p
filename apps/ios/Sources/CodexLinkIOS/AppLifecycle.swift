@@ -96,18 +96,26 @@ public final class AppLifecycle: ObservableObject {
         phase = .idle
     }
 
-    public func submitTurn(threadId: ThreadId, input: String) {
-        peer.send(.uiAction(.submitTurn(threadId: threadId, input: input)))
+    public func submitTurn(projectId: ProjectId, threadId: ThreadId?, input: String) {
+        peer.send(.uiAction(.submitTurn(projectId: projectId, threadId: threadId, input: input)))
     }
 
     public func respondApproval(_ decision: ApprovalDecision) {
         peer.send(.uiAction(.respondApproval(decision: decision)))
     }
 
+    public func cancelTurn(threadId: ThreadId, turnId: TurnId) {
+        peer.send(.uiAction(.cancelTurn(threadId: threadId, turnId: turnId)))
+    }
+
+    public func resumeThread(threadId: ThreadId) {
+        peer.send(.uiAction(.resumeThread(threadId: threadId)))
+    }
+
     public func requestSnapshot() {
         peer.send(.snapshotRequest(SessionSnapshotRequest(
             fromUserId: userId, fromDeviceId: deviceId,
-            hostId: hostId, lastSequence: projection.latestSequence
+            hostId: hostId, lastSequence: projection.state.latestSequence
         )))
     }
 }
@@ -215,7 +223,15 @@ extension AppLifecycle: PeerConnectionDelegate {
 
     nonisolated public func peer(_ peer: PeerConnection, didReceiveFrame frame: CodexLinkSessionFrame) {
         Task { @MainActor in
-            self.projection.apply(frame)
+            switch frame {
+            case .event(_, _, let event):
+                self.projection.apply(event)
+            case .snapshotResponse(let response):
+                self.projection.applySnapshot(response.projection)
+            case .uiAction, .snapshotRequest, .ack:
+                // Server frames addressed to host. Ignore on the client side.
+                break
+            }
         }
     }
 

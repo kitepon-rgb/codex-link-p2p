@@ -1,11 +1,22 @@
 // Session protocol types (DataChannel 上のみで流れる).
 //
-// TypeScript `packages/protocol/src/session.ts` の対応物. このファイルは
-// Relay 経由では一切流れない (Relay は payload-blind).
+// `packages/protocol/src/session.ts` の Swift mirror. 親リポ (broker 版)
+// の iOS と完全同じ field 名 / enum 値で揃え、CodexLink chat UI が当該リポと
+// 同じ projection を持てるようにする.
 
 import Foundation
 
-// ===== Capabilities / Project =====
+// ===== Host meta =====
+
+public struct HostChatGptAccount: Codable, Equatable, Sendable {
+    public let email: String
+    public let planType: String?
+
+    public init(email: String, planType: String? = nil) {
+        self.email = email
+        self.planType = planType
+    }
+}
 
 public struct HostCapabilities: Codable, Sendable, Equatable {
     public let hostId: HostId
@@ -21,381 +32,435 @@ public struct HostCapabilities: Codable, Sendable, Equatable {
     }
 }
 
-public struct ProjectDescriptor: Codable, Sendable, Equatable {
-    public let id: String
-    public let displayName: String
-    public let path: String
+// ===== Refs =====
 
-    public init(id: String, displayName: String, path: String) {
+public struct ProjectRef: Codable, Sendable, Equatable, Identifiable {
+    public let id: ProjectId
+    public let hostId: HostId
+    public let name: String
+    public let pathLabel: String
+
+    public init(id: ProjectId, hostId: HostId, name: String, pathLabel: String) {
         self.id = id
-        self.displayName = displayName
-        self.path = path
+        self.hostId = hostId
+        self.name = name
+        self.pathLabel = pathLabel
     }
 }
 
-// ===== Transcript / Timeline =====
+public struct ThreadRef: Codable, Sendable, Equatable, Identifiable {
+    public let id: ThreadId
+    public let projectId: ProjectId
+    public let title: String?
+    public let updatedAt: String?
 
-public struct TranscriptItem: Codable, Sendable, Equatable {
-    public enum Role: String, Codable, Sendable {
-        case user, assistant, system
-    }
-    public let id: String
-    public let role: Role
-    public let content: String
-
-    public init(id: String, role: Role, content: String) {
+    public init(id: ThreadId, projectId: ProjectId, title: String?, updatedAt: String? = nil) {
         self.id = id
-        self.role = role
-        self.content = content
-    }
-}
-
-public enum TimelineItemKind: String, Codable, Sendable {
-    case toolCall = "tool_call"
-    case approval
-    case reasoning
-}
-
-public enum TimelineItemOutcome: String, Codable, Sendable {
-    case success, failure, cancelled
-}
-
-public struct TimelineEntry: Codable, Sendable, Equatable {
-    public let itemId: String
-    public let kind: TimelineItemKind
-    public let label: String
-    public let outcome: TimelineItemOutcome?
-
-    public init(itemId: String, kind: TimelineItemKind, label: String, outcome: TimelineItemOutcome?) {
-        self.itemId = itemId
-        self.kind = kind
-        self.label = label
-        self.outcome = outcome
-    }
-}
-
-// ===== Approval =====
-
-public enum ApprovalKind: String, Codable, Sendable {
-    case command, patch
-    case fileWrite = "file_write"
-    case network
-}
-
-public struct ApprovalRequest: Codable, Sendable, Equatable {
-    public let requestId: RequestId
-    public let threadId: ThreadId
-    public let summary: String
-    public let kind: ApprovalKind
-    public let detail: String
-
-    public init(requestId: RequestId, threadId: ThreadId, summary: String, kind: ApprovalKind, detail: String) {
-        self.requestId = requestId
-        self.threadId = threadId
-        self.summary = summary
-        self.kind = kind
-        self.detail = detail
-    }
-}
-
-public struct ApprovalDecision: Codable, Sendable, Equatable {
-    public let requestId: RequestId
-    public let approved: Bool
-    public let reason: String?
-
-    public init(requestId: RequestId, approved: Bool, reason: String? = nil) {
-        self.requestId = requestId
-        self.approved = approved
-        self.reason = reason
+        self.projectId = projectId
+        self.title = title
+        self.updatedAt = updatedAt
     }
 }
 
 // ===== Turn status =====
 
-public enum TurnStatus: String, Codable, Sendable {
-    case idle, thinking, tool
-    case awaitingApproval = "awaiting_approval"
+public enum TurnStatus: String, Codable, Equatable, Hashable, Sendable {
+    case idle
+    case running
+    case waitingForApproval = "waiting_for_approval"
+    case completed
+    case failed
+    case canceled
+}
+
+// ===== Approval =====
+
+public enum ApprovalKind: String, Codable, Equatable, Sendable {
+    case commandExecution = "command_execution"
+    case fileChange = "file_change"
+    case network
+    case userInput = "user_input"
+}
+
+public enum ApprovalDecisionKind: String, Codable, Equatable, Sendable {
+    case accept
+    case acceptForSession = "accept_for_session"
+    case decline
+    case cancel
+}
+
+public struct ApprovalRequest: Codable, Sendable, Equatable, Identifiable {
+    public let id: RequestId
+    public let kind: ApprovalKind
+    public let threadId: ThreadId
+    public let turnId: TurnId
+    public let itemId: ItemId?
+    public let title: String
+    public let detail: String
+    public let availableDecisions: [ApprovalDecisionKind]
+
+    public init(
+        id: RequestId,
+        kind: ApprovalKind,
+        threadId: ThreadId,
+        turnId: TurnId,
+        itemId: ItemId? = nil,
+        title: String,
+        detail: String,
+        availableDecisions: [ApprovalDecisionKind]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.threadId = threadId
+        self.turnId = turnId
+        self.itemId = itemId
+        self.title = title
+        self.detail = detail
+        self.availableDecisions = availableDecisions
+    }
+}
+
+public struct ApprovalDecision: Codable, Sendable, Equatable {
+    public let requestId: RequestId
+    public let decision: ApprovalDecisionKind
+
+    public init(requestId: RequestId, decision: ApprovalDecisionKind) {
+        self.requestId = requestId
+        self.decision = decision
+    }
+}
+
+// ===== Transcript / Timeline =====
+
+public enum TranscriptRole: String, Codable, Equatable, Sendable {
+    case user
+    case assistant
+}
+
+public struct TranscriptItem: Codable, Sendable, Equatable, Identifiable {
+    public let id: ItemId
+    public let role: TranscriptRole
+    public var text: String
+
+    public init(id: ItemId, role: TranscriptRole, text: String) {
+        self.id = id
+        self.role = role
+        self.text = text
+    }
+}
+
+public enum TimelineItemStatus: String, Codable, Equatable, Sendable {
+    case running
+    case completed
+    case failed
+    case declined
+}
+
+public struct TimelineEntry: Codable, Sendable, Equatable, Identifiable {
+    public var id: ItemId { itemId }
+    public let itemId: ItemId
+    public let turnId: TurnId
+    public var label: String
+    public var detail: String?
+    public var status: TimelineItemStatus
+
+    public init(itemId: ItemId, turnId: TurnId, label: String, detail: String?, status: TimelineItemStatus) {
+        self.itemId = itemId
+        self.turnId = turnId
+        self.label = label
+        self.detail = detail
+        self.status = status
+    }
+}
+
+// ===== Diagnostic =====
+
+public enum DiagnosticSeverity: String, Codable, Equatable, Sendable {
+    case info
+    case warning
     case error
+}
+
+public struct DiagnosticEvent: Codable, Equatable, Sendable {
+    public let scope: String
+    public let severity: DiagnosticSeverity
+    public let message: String
+
+    public init(scope: String, severity: DiagnosticSeverity, message: String) {
+        self.scope = scope
+        self.severity = severity
+        self.message = message
+    }
 }
 
 // ===== CodexLinkEvent (discriminated union) =====
 
 public enum CodexLinkEvent: Codable, Sendable, Equatable {
-    case hostCapabilitiesUpdated(seq: SequenceNumber, ts: Int, capabilities: HostCapabilities)
-    case projectListUpdated(seq: SequenceNumber, ts: Int, projects: [ProjectDescriptor])
-    case threadStarted(seq: SequenceNumber, ts: Int, threadId: ThreadId, projectId: String, title: String)
-    case turnStatusChanged(seq: SequenceNumber, ts: Int, threadId: ThreadId, status: TurnStatus)
-    case assistantDelta(seq: SequenceNumber, ts: Int, threadId: ThreadId, delta: String)
-    case assistantFinal(seq: SequenceNumber, ts: Int, threadId: ThreadId, text: String)
-    case transcriptItemRecorded(seq: SequenceNumber, ts: Int, threadId: ThreadId, item: TranscriptItem)
-    case timelineItemStarted(seq: SequenceNumber, ts: Int, threadId: ThreadId, itemId: String, kind: TimelineItemKind, label: String)
-    case timelineItemCompleted(seq: SequenceNumber, ts: Int, threadId: ThreadId, itemId: String, outcome: TimelineItemOutcome)
-    case approvalRequested(seq: SequenceNumber, ts: Int, request: ApprovalRequest)
-    case approvalResolved(seq: SequenceNumber, ts: Int, threadId: ThreadId, decision: ApprovalDecision)
-    case rateLimitUpdated(seq: SequenceNumber, ts: Int, remainingTokens: Int, resetAt: Int)
-    case errorReported(seq: SequenceNumber, ts: Int, threadId: ThreadId?, code: String, message: String)
+    case hostAccountUpdated(hostId: HostId, account: HostChatGptAccount?)
+    case hostCapabilitiesUpdated(hostId: HostId, capabilities: HostCapabilities)
+    case projectListUpdated(hostId: HostId, projects: [ProjectRef])
+    case threadStarted(thread: ThreadRef)
+    case turnStatusChanged(threadId: ThreadId, turnId: TurnId, status: TurnStatus)
+    case assistantDelta(threadId: ThreadId, turnId: TurnId, text: String)
+    case assistantFinal(threadId: ThreadId, turnId: TurnId, itemId: ItemId, text: String)
+    case transcriptItemRecorded(threadId: ThreadId, turnId: TurnId, itemId: ItemId, role: TranscriptRole, text: String)
+    case timelineItemStarted(threadId: ThreadId, turnId: TurnId, itemId: ItemId, label: String, detail: String?)
+    case timelineItemCompleted(threadId: ThreadId, turnId: TurnId, itemId: ItemId, status: TimelineItemStatus)
+    case approvalRequested(request: ApprovalRequest)
+    case approvalResolved(requestId: RequestId, decision: ApprovalDecisionKind?)
+    case rateLimitUpdated(userId: UserId, usedPercent: Double?)
+    case diagnosticReported(diagnostic: DiagnosticEvent)
+    case errorReported(scope: String, message: String)
 
-    public var sequence: SequenceNumber {
+    private enum CodingKeys: String, CodingKey {
+        case type, hostId, account, capabilities, projects, thread
+        case threadId, turnId, itemId, role, text, label, detail, status
+        case request, requestId, decision
+        case userId, usedPercent
+        case diagnostic, scope, message
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .hostCapabilitiesUpdated(let s, _, _),
-             .projectListUpdated(let s, _, _),
-             .threadStarted(let s, _, _, _, _),
-             .turnStatusChanged(let s, _, _, _),
-             .assistantDelta(let s, _, _, _),
-             .assistantFinal(let s, _, _, _),
-             .transcriptItemRecorded(let s, _, _, _),
-             .timelineItemStarted(let s, _, _, _, _, _),
-             .timelineItemCompleted(let s, _, _, _, _),
-             .approvalRequested(let s, _, _),
-             .approvalResolved(let s, _, _, _),
-             .rateLimitUpdated(let s, _, _, _),
-             .errorReported(let s, _, _, _, _):
-            return s
+        case .hostAccountUpdated(let hostId, let account):
+            try c.encode("host.account.updated", forKey: .type)
+            try c.encode(hostId, forKey: .hostId)
+            try c.encode(account, forKey: .account)
+        case .hostCapabilitiesUpdated(let hostId, let capabilities):
+            try c.encode("host.capabilities.updated", forKey: .type)
+            try c.encode(hostId, forKey: .hostId)
+            try c.encode(capabilities, forKey: .capabilities)
+        case .projectListUpdated(let hostId, let projects):
+            try c.encode("project.list.updated", forKey: .type)
+            try c.encode(hostId, forKey: .hostId)
+            try c.encode(projects, forKey: .projects)
+        case .threadStarted(let thread):
+            try c.encode("thread.started", forKey: .type)
+            try c.encode(thread, forKey: .thread)
+        case .turnStatusChanged(let threadId, let turnId, let status):
+            try c.encode("turn.status.changed", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+            try c.encode(status, forKey: .status)
+        case .assistantDelta(let threadId, let turnId, let text):
+            try c.encode("assistant.delta", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+            try c.encode(text, forKey: .text)
+        case .assistantFinal(let threadId, let turnId, let itemId, let text):
+            try c.encode("assistant.final", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+            try c.encode(itemId, forKey: .itemId)
+            try c.encode(text, forKey: .text)
+        case .transcriptItemRecorded(let threadId, let turnId, let itemId, let role, let text):
+            try c.encode("transcript.item.recorded", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+            try c.encode(itemId, forKey: .itemId)
+            try c.encode(role, forKey: .role)
+            try c.encode(text, forKey: .text)
+        case .timelineItemStarted(let threadId, let turnId, let itemId, let label, let detail):
+            try c.encode("timeline.item.started", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+            try c.encode(itemId, forKey: .itemId)
+            try c.encode(label, forKey: .label)
+            try c.encodeIfPresent(detail, forKey: .detail)
+        case .timelineItemCompleted(let threadId, let turnId, let itemId, let status):
+            try c.encode("timeline.item.completed", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+            try c.encode(itemId, forKey: .itemId)
+            try c.encode(status, forKey: .status)
+        case .approvalRequested(let request):
+            try c.encode("approval.requested", forKey: .type)
+            try c.encode(request, forKey: .request)
+        case .approvalResolved(let requestId, let decision):
+            try c.encode("approval.resolved", forKey: .type)
+            try c.encode(requestId, forKey: .requestId)
+            try c.encodeIfPresent(decision, forKey: .decision)
+        case .rateLimitUpdated(let userId, let usedPercent):
+            try c.encode("rate_limit.updated", forKey: .type)
+            try c.encode(userId, forKey: .userId)
+            try c.encodeIfPresent(usedPercent, forKey: .usedPercent)
+        case .diagnosticReported(let diagnostic):
+            try c.encode("diagnostic.reported", forKey: .type)
+            try c.encode(diagnostic, forKey: .diagnostic)
+        case .errorReported(let scope, let message):
+            try c.encode("error.reported", forKey: .type)
+            try c.encode(scope, forKey: .scope)
+            try c.encode(message, forKey: .message)
         }
     }
 
-    private enum K: String, CodingKey {
-        case type, sequence, timestamp
-        case capabilities, projects, threadId, projectId, title, status
-        case delta, text, item, itemId, kind, label, outcome, request, decision
-        case remainingTokens, resetAt, code, message
-    }
-
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: K.self)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
         let type = try c.decode(String.self, forKey: .type)
-        let seq = try c.decode(SequenceNumber.self, forKey: .sequence)
-        let ts = try c.decode(Int.self, forKey: .timestamp)
         switch type {
+        case "host.account.updated":
+            self = .hostAccountUpdated(
+                hostId: try c.decode(HostId.self, forKey: .hostId),
+                account: try c.decodeIfPresent(HostChatGptAccount.self, forKey: .account)
+            )
         case "host.capabilities.updated":
             self = .hostCapabilitiesUpdated(
-                seq: seq, ts: ts,
+                hostId: try c.decode(HostId.self, forKey: .hostId),
                 capabilities: try c.decode(HostCapabilities.self, forKey: .capabilities)
             )
         case "project.list.updated":
             self = .projectListUpdated(
-                seq: seq, ts: ts,
-                projects: try c.decode([ProjectDescriptor].self, forKey: .projects)
+                hostId: try c.decode(HostId.self, forKey: .hostId),
+                projects: try c.decode([ProjectRef].self, forKey: .projects)
             )
         case "thread.started":
-            self = .threadStarted(
-                seq: seq, ts: ts,
-                threadId: try c.decode(ThreadId.self, forKey: .threadId),
-                projectId: try c.decode(String.self, forKey: .projectId),
-                title: try c.decode(String.self, forKey: .title)
-            )
+            self = .threadStarted(thread: try c.decode(ThreadRef.self, forKey: .thread))
         case "turn.status.changed":
             self = .turnStatusChanged(
-                seq: seq, ts: ts,
                 threadId: try c.decode(ThreadId.self, forKey: .threadId),
+                turnId: try c.decode(TurnId.self, forKey: .turnId),
                 status: try c.decode(TurnStatus.self, forKey: .status)
             )
         case "assistant.delta":
             self = .assistantDelta(
-                seq: seq, ts: ts,
                 threadId: try c.decode(ThreadId.self, forKey: .threadId),
-                delta: try c.decode(String.self, forKey: .delta)
+                turnId: try c.decode(TurnId.self, forKey: .turnId),
+                text: try c.decode(String.self, forKey: .text)
             )
         case "assistant.final":
             self = .assistantFinal(
-                seq: seq, ts: ts,
                 threadId: try c.decode(ThreadId.self, forKey: .threadId),
+                turnId: try c.decode(TurnId.self, forKey: .turnId),
+                itemId: try c.decode(ItemId.self, forKey: .itemId),
                 text: try c.decode(String.self, forKey: .text)
             )
         case "transcript.item.recorded":
             self = .transcriptItemRecorded(
-                seq: seq, ts: ts,
                 threadId: try c.decode(ThreadId.self, forKey: .threadId),
-                item: try c.decode(TranscriptItem.self, forKey: .item)
+                turnId: try c.decode(TurnId.self, forKey: .turnId),
+                itemId: try c.decode(ItemId.self, forKey: .itemId),
+                role: try c.decode(TranscriptRole.self, forKey: .role),
+                text: try c.decode(String.self, forKey: .text)
             )
         case "timeline.item.started":
             self = .timelineItemStarted(
-                seq: seq, ts: ts,
                 threadId: try c.decode(ThreadId.self, forKey: .threadId),
-                itemId: try c.decode(String.self, forKey: .itemId),
-                kind: try c.decode(TimelineItemKind.self, forKey: .kind),
-                label: try c.decode(String.self, forKey: .label)
+                turnId: try c.decode(TurnId.self, forKey: .turnId),
+                itemId: try c.decode(ItemId.self, forKey: .itemId),
+                label: try c.decode(String.self, forKey: .label),
+                detail: try c.decodeIfPresent(String.self, forKey: .detail)
             )
         case "timeline.item.completed":
             self = .timelineItemCompleted(
-                seq: seq, ts: ts,
                 threadId: try c.decode(ThreadId.self, forKey: .threadId),
-                itemId: try c.decode(String.self, forKey: .itemId),
-                outcome: try c.decode(TimelineItemOutcome.self, forKey: .outcome)
+                turnId: try c.decode(TurnId.self, forKey: .turnId),
+                itemId: try c.decode(ItemId.self, forKey: .itemId),
+                status: try c.decode(TimelineItemStatus.self, forKey: .status)
             )
         case "approval.requested":
-            self = .approvalRequested(
-                seq: seq, ts: ts,
-                request: try c.decode(ApprovalRequest.self, forKey: .request)
-            )
+            self = .approvalRequested(request: try c.decode(ApprovalRequest.self, forKey: .request))
         case "approval.resolved":
             self = .approvalResolved(
-                seq: seq, ts: ts,
-                threadId: try c.decode(ThreadId.self, forKey: .threadId),
-                decision: try c.decode(ApprovalDecision.self, forKey: .decision)
+                requestId: try c.decode(RequestId.self, forKey: .requestId),
+                decision: try c.decodeIfPresent(ApprovalDecisionKind.self, forKey: .decision)
             )
         case "rate_limit.updated":
             self = .rateLimitUpdated(
-                seq: seq, ts: ts,
-                remainingTokens: try c.decode(Int.self, forKey: .remainingTokens),
-                resetAt: try c.decode(Int.self, forKey: .resetAt)
+                userId: try c.decode(UserId.self, forKey: .userId),
+                usedPercent: try c.decodeIfPresent(Double.self, forKey: .usedPercent)
             )
+        case "diagnostic.reported":
+            self = .diagnosticReported(diagnostic: try c.decode(DiagnosticEvent.self, forKey: .diagnostic))
         case "error.reported":
             self = .errorReported(
-                seq: seq, ts: ts,
-                threadId: try c.decodeIfPresent(ThreadId.self, forKey: .threadId),
-                code: try c.decode(String.self, forKey: .code),
+                scope: try c.decode(String.self, forKey: .scope),
                 message: try c.decode(String.self, forKey: .message)
             )
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: c,
-                debugDescription: "unknown CodexLinkEvent type: \(type)"
+                forKey: .type, in: c, debugDescription: "Unknown CodexLinkEvent type: \(type)"
             )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: K.self)
-        try c.encode(sequence, forKey: .sequence)
-        switch self {
-        case .hostCapabilitiesUpdated(_, let ts, let cap):
-            try c.encode("host.capabilities.updated", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(cap, forKey: .capabilities)
-        case .projectListUpdated(_, let ts, let p):
-            try c.encode("project.list.updated", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(p, forKey: .projects)
-        case .threadStarted(_, let ts, let t, let p, let title):
-            try c.encode("thread.started", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(p, forKey: .projectId)
-            try c.encode(title, forKey: .title)
-        case .turnStatusChanged(_, let ts, let t, let s):
-            try c.encode("turn.status.changed", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(s, forKey: .status)
-        case .assistantDelta(_, let ts, let t, let d):
-            try c.encode("assistant.delta", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(d, forKey: .delta)
-        case .assistantFinal(_, let ts, let t, let text):
-            try c.encode("assistant.final", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(text, forKey: .text)
-        case .transcriptItemRecorded(_, let ts, let t, let item):
-            try c.encode("transcript.item.recorded", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(item, forKey: .item)
-        case .timelineItemStarted(_, let ts, let t, let id, let k, let l):
-            try c.encode("timeline.item.started", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(id, forKey: .itemId)
-            try c.encode(k, forKey: .kind)
-            try c.encode(l, forKey: .label)
-        case .timelineItemCompleted(_, let ts, let t, let id, let o):
-            try c.encode("timeline.item.completed", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(id, forKey: .itemId)
-            try c.encode(o, forKey: .outcome)
-        case .approvalRequested(_, let ts, let r):
-            try c.encode("approval.requested", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(r, forKey: .request)
-        case .approvalResolved(_, let ts, let t, let d):
-            try c.encode("approval.resolved", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(d, forKey: .decision)
-        case .rateLimitUpdated(_, let ts, let r, let reset):
-            try c.encode("rate_limit.updated", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encode(r, forKey: .remainingTokens)
-            try c.encode(reset, forKey: .resetAt)
-        case .errorReported(_, let ts, let t, let code, let msg):
-            try c.encode("error.reported", forKey: .type)
-            try c.encode(ts, forKey: .timestamp)
-            try c.encodeIfPresent(t, forKey: .threadId)
-            try c.encode(code, forKey: .code)
-            try c.encode(msg, forKey: .message)
         }
     }
 }
 
-// ===== UI Actions (iPhone → Host) =====
+// ===== UI Action (iPhone → Host) =====
 
 public enum CodexLinkUIAction: Codable, Sendable, Equatable {
-    case submitTurn(threadId: ThreadId, input: String)
+    case submitTurn(projectId: ProjectId, threadId: ThreadId?, input: String)
     case respondApproval(decision: ApprovalDecision)
-    case cancelTurn(threadId: ThreadId)
-    case selectProject(projectId: String)
+    case cancelTurn(threadId: ThreadId, turnId: TurnId)
+    case selectProject(projectId: ProjectId)
+    case resumeThread(threadId: ThreadId)
 
-    private enum K: String, CodingKey {
-        case type, threadId, input, decision, projectId
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case projectId, threadId, turnId, input, decision
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .submitTurn(let projectId, let threadId, let input):
+            try c.encode("ui.submit_turn", forKey: .type)
+            try c.encode(projectId, forKey: .projectId)
+            try c.encodeIfPresent(threadId, forKey: .threadId)
+            try c.encode(input, forKey: .input)
+        case .respondApproval(let decision):
+            try c.encode("ui.respond_approval", forKey: .type)
+            try c.encode(decision, forKey: .decision)
+        case .cancelTurn(let threadId, let turnId):
+            try c.encode("ui.cancel_turn", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+            try c.encode(turnId, forKey: .turnId)
+        case .selectProject(let projectId):
+            try c.encode("ui.select_project", forKey: .type)
+            try c.encode(projectId, forKey: .projectId)
+        case .resumeThread(let threadId):
+            try c.encode("ui.resume_thread", forKey: .type)
+            try c.encode(threadId, forKey: .threadId)
+        }
     }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: K.self)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
         let type = try c.decode(String.self, forKey: .type)
         switch type {
         case "ui.submit_turn":
             self = .submitTurn(
-                threadId: try c.decode(ThreadId.self, forKey: .threadId),
+                projectId: try c.decode(ProjectId.self, forKey: .projectId),
+                threadId: try c.decodeIfPresent(ThreadId.self, forKey: .threadId),
                 input: try c.decode(String.self, forKey: .input)
             )
         case "ui.respond_approval":
-            self = .respondApproval(
-                decision: try c.decode(ApprovalDecision.self, forKey: .decision)
-            )
+            self = .respondApproval(decision: try c.decode(ApprovalDecision.self, forKey: .decision))
         case "ui.cancel_turn":
-            self = .cancelTurn(threadId: try c.decode(ThreadId.self, forKey: .threadId))
+            self = .cancelTurn(
+                threadId: try c.decode(ThreadId.self, forKey: .threadId),
+                turnId: try c.decode(TurnId.self, forKey: .turnId)
+            )
         case "ui.select_project":
-            self = .selectProject(projectId: try c.decode(String.self, forKey: .projectId))
+            self = .selectProject(projectId: try c.decode(ProjectId.self, forKey: .projectId))
+        case "ui.resume_thread":
+            self = .resumeThread(threadId: try c.decode(ThreadId.self, forKey: .threadId))
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: c,
-                debugDescription: "unknown UI action: \(type)"
+                forKey: .type, in: c, debugDescription: "Unknown CodexLinkUIAction type: \(type)"
             )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: K.self)
-        switch self {
-        case .submitTurn(let t, let i):
-            try c.encode("ui.submit_turn", forKey: .type)
-            try c.encode(t, forKey: .threadId)
-            try c.encode(i, forKey: .input)
-        case .respondApproval(let d):
-            try c.encode("ui.respond_approval", forKey: .type)
-            try c.encode(d, forKey: .decision)
-        case .cancelTurn(let t):
-            try c.encode("ui.cancel_turn", forKey: .type)
-            try c.encode(t, forKey: .threadId)
-        case .selectProject(let p):
-            try c.encode("ui.select_project", forKey: .type)
-            try c.encode(p, forKey: .projectId)
         }
     }
 }
 
-// ===== Snapshot (replay-on-peer) =====
+// ===== Snapshot =====
 
 public struct SessionSnapshotRequest: Codable, Sendable, Equatable {
     public let fromUserId: UserId
     public let fromDeviceId: DeviceId
     public let hostId: HostId
-    public let lastSequence: SequenceNumber?
+    public let lastSequence: Int?
 
-    public init(fromUserId: UserId, fromDeviceId: DeviceId, hostId: HostId, lastSequence: SequenceNumber?) {
+    public init(fromUserId: UserId, fromDeviceId: DeviceId, hostId: HostId, lastSequence: Int?) {
         self.fromUserId = fromUserId
         self.fromDeviceId = fromDeviceId
         self.hostId = hostId
@@ -404,33 +469,53 @@ public struct SessionSnapshotRequest: Codable, Sendable, Equatable {
 }
 
 public struct ThreadProjection: Codable, Sendable, Equatable {
-    public let threadId: ThreadId
-    public let title: String
+    public let thread: ThreadRef
     public let status: TurnStatus
+    public let currentTurnId: TurnId?
     public let transcript: [TranscriptItem]
     public let timeline: [TimelineEntry]
     public let pendingApproval: ApprovalRequest?
+    public let streamingAssistant: String
 
-    public init(threadId: ThreadId, title: String, status: TurnStatus, transcript: [TranscriptItem], timeline: [TimelineEntry], pendingApproval: ApprovalRequest?) {
-        self.threadId = threadId
-        self.title = title
+    public init(
+        thread: ThreadRef,
+        status: TurnStatus,
+        currentTurnId: TurnId?,
+        transcript: [TranscriptItem],
+        timeline: [TimelineEntry],
+        pendingApproval: ApprovalRequest?,
+        streamingAssistant: String
+    ) {
+        self.thread = thread
         self.status = status
+        self.currentTurnId = currentTurnId
         self.transcript = transcript
         self.timeline = timeline
         self.pendingApproval = pendingApproval
+        self.streamingAssistant = streamingAssistant
     }
 }
 
 public struct CodexLinkProjection: Codable, Sendable, Equatable {
     public let hostId: HostId
+    public let account: HostChatGptAccount?
     public let capabilities: HostCapabilities
-    public let projects: [ProjectDescriptor]
+    public let projects: [ProjectRef]
     public let threads: [ThreadProjection]
-    public let latestSequence: SequenceNumber
+    public let latestSequence: Int
     public let capturedAt: Int
 
-    public init(hostId: HostId, capabilities: HostCapabilities, projects: [ProjectDescriptor], threads: [ThreadProjection], latestSequence: SequenceNumber, capturedAt: Int) {
+    public init(
+        hostId: HostId,
+        account: HostChatGptAccount?,
+        capabilities: HostCapabilities,
+        projects: [ProjectRef],
+        threads: [ThreadProjection],
+        latestSequence: Int,
+        capturedAt: Int
+    ) {
         self.hostId = hostId
+        self.account = account
         self.capabilities = capabilities
         self.projects = projects
         self.threads = threads
@@ -447,25 +532,70 @@ public struct SessionSnapshotResponse: Codable, Sendable, Equatable {
     }
 }
 
+// ===== Live Activity =====
+
+public struct LiveActivityState: Codable, Equatable, Sendable {
+    public var hostName: String
+    public var projectName: String
+    public var status: TurnStatus
+    public var latestText: String?
+    public var approvalRequired: Bool
+
+    public init(hostName: String, projectName: String, status: TurnStatus, latestText: String?, approvalRequired: Bool) {
+        self.hostName = hostName
+        self.projectName = projectName
+        self.status = status
+        self.latestText = latestText
+        self.approvalRequired = approvalRequired
+    }
+}
+
 // ===== Session frame (DataChannel wire) =====
 
-public enum CodexLinkSessionFrame: Codable, Sendable, Equatable {
-    case event(CodexLinkEvent)
+public enum CodexLinkSessionFrame: Codable, Sendable {
+    case event(sequence: Int, timestamp: Int, event: CodexLinkEvent)
     case uiAction(CodexLinkUIAction)
     case snapshotRequest(SessionSnapshotRequest)
     case snapshotResponse(SessionSnapshotResponse)
-    case ack(SequenceNumber)
+    case ack(sequence: Int)
 
-    private enum K: String, CodingKey {
-        case kind, event, action, request, response, sequence
+    private enum CodingKeys: String, CodingKey {
+        case kind, sequence, timestamp, event, action, request, response
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .event(let sequence, let timestamp, let event):
+            try c.encode("event", forKey: .kind)
+            try c.encode(sequence, forKey: .sequence)
+            try c.encode(timestamp, forKey: .timestamp)
+            try c.encode(event, forKey: .event)
+        case .uiAction(let action):
+            try c.encode("ui_action", forKey: .kind)
+            try c.encode(action, forKey: .action)
+        case .snapshotRequest(let r):
+            try c.encode("snapshot_request", forKey: .kind)
+            try c.encode(r, forKey: .request)
+        case .snapshotResponse(let r):
+            try c.encode("snapshot_response", forKey: .kind)
+            try c.encode(r, forKey: .response)
+        case .ack(let sequence):
+            try c.encode("ack", forKey: .kind)
+            try c.encode(sequence, forKey: .sequence)
+        }
     }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: K.self)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try c.decode(String.self, forKey: .kind)
         switch kind {
         case "event":
-            self = .event(try c.decode(CodexLinkEvent.self, forKey: .event))
+            self = .event(
+                sequence: try c.decode(Int.self, forKey: .sequence),
+                timestamp: try c.decode(Int.self, forKey: .timestamp),
+                event: try c.decode(CodexLinkEvent.self, forKey: .event)
+            )
         case "ui_action":
             self = .uiAction(try c.decode(CodexLinkUIAction.self, forKey: .action))
         case "snapshot_request":
@@ -473,33 +603,11 @@ public enum CodexLinkSessionFrame: Codable, Sendable, Equatable {
         case "snapshot_response":
             self = .snapshotResponse(try c.decode(SessionSnapshotResponse.self, forKey: .response))
         case "ack":
-            self = .ack(try c.decode(SequenceNumber.self, forKey: .sequence))
+            self = .ack(sequence: try c.decode(Int.self, forKey: .sequence))
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .kind, in: c,
-                debugDescription: "unknown frame kind: \(kind)"
+                forKey: .kind, in: c, debugDescription: "Unknown CodexLinkSessionFrame kind: \(kind)"
             )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: K.self)
-        switch self {
-        case .event(let e):
-            try c.encode("event", forKey: .kind)
-            try c.encode(e, forKey: .event)
-        case .uiAction(let a):
-            try c.encode("ui_action", forKey: .kind)
-            try c.encode(a, forKey: .action)
-        case .snapshotRequest(let r):
-            try c.encode("snapshot_request", forKey: .kind)
-            try c.encode(r, forKey: .request)
-        case .snapshotResponse(let r):
-            try c.encode("snapshot_response", forKey: .kind)
-            try c.encode(r, forKey: .response)
-        case .ack(let s):
-            try c.encode("ack", forKey: .kind)
-            try c.encode(s, forKey: .sequence)
         }
     }
 }
