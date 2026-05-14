@@ -226,55 +226,55 @@ ICE servers (Mac Host / iPhone が peer 構築時に注入):
 2026-05-14 の実機 iPhone 動作確認で**繋がるまで持っていけたが応急処置が混在**している. 残作業:
 
 ### iOS — pairing UX
-- **正規 QR pairing flow が未実装**. 現状は `apps/ios/App/CodexLinkApp.swift` の `OnboardingView` で
+- [ ] **正規 QR pairing flow が未実装**. 現状は `apps/ios/App/CodexLinkApp.swift` の `OnboardingView` で
   Mac Host が出す 4 値 (userId / deviceId / sessionToken / hostId) を手で貼り付けるか、
   または `AutoConnect.fromBundledPairFile()` で `Documents/codex-link-pair.json` を読む dev-only 経路.
-- 手動 paste 時に `Universal Clipboard` が同期しない事故が頻発. 本番ユーザーには破綻する.
-- **やるべき**: 既存の `NSCameraUsageDescription` を使って QR scanner を入れる. Mac Host CLI が
+- [ ] 手動 paste 時に `Universal Clipboard` が同期しない事故が頻発. 本番ユーザーには破綻する.
+- [ ] **やるべき**: 既存の `NSCameraUsageDescription` を使って QR scanner を入れる. Mac Host CLI が
   `codex-link-host pair` で発行する pairing code + `userId`/`hostId` を QR にして Mac の端末に
   表示し、iPhone のカメラで読み取る. iPhone は読み取った値で `/api/device-session/register` を
   叩き直して fresh credentials を取り、connect する.
 
 ### iOS — 接続経路バッジの妥当性
-- `[CodexLinkRootView](apps/ios/Sources/CodexLinkIOS/CodexLinkRootView.swift)` の `pathBadge` は
+- [ ] `[CodexLinkRootView](apps/ios/Sources/CodexLinkIOS/CodexLinkRootView.swift)` の `pathBadge` は
   `phase == .peerOpen` で「接続済」(緑) をデフォルトで出し、`connectionPath` の確定後に
   「直結」「中継」を上書きする実装. これは BOOTSTRAP.md 当初設計の「path 単独 ↔ UI」とズレている.
-- 同 [AppLifecycle.swift](apps/ios/Sources/CodexLinkIOS/AppLifecycle.swift) で `didChangePath` が
+- [ ] 同 [AppLifecycle.swift](apps/ios/Sources/CodexLinkIOS/AppLifecycle.swift) で `didChangePath` が
   no-op だった (= path が UI まで届いてなかった) のを `@Published connectionPath` に配線して直した.
-- [PeerConnection.swift](apps/ios/Sources/CodexLinkIOS/PeerConnection.swift) に BOOTSTRAP.md 当初
+- [ ] [PeerConnection.swift](apps/ios/Sources/CodexLinkIOS/PeerConnection.swift) に BOOTSTRAP.md 当初
   設計の **stats poller (5s 周期)** が未実装だったので 2s 周期で追加した.
 
 ### iOS — 診断ログの整理
-- `apps/ios/App/CodexLinkApp.swift` の `diag(_)`、`apps/ios/Sources/CodexLinkIOS/AppLifecycle.swift`
+- [ ] `apps/ios/App/CodexLinkApp.swift` の `diag(_)`、`apps/ios/Sources/CodexLinkIOS/AppLifecycle.swift`
   の `fwDiag(_)`、`PeerConnection.swift` の `pcDiag(_)`、`SignalingWebSocketClient.swift` の
   `sigClientLog(_)` の **4 ヶ所**で `NSLog` + `Documents/codex-link-debug.log` への file writer を
   入れている. 実機 debug で iOS unified log が見えなかったので入れた経緯. 本番には不要.
-- **やるべき**: `#if DEBUG` でガード、または完全に削除して os_log + Console.app 経由に統一.
+- [ ] **やるべき**: `#if DEBUG` でガード、または完全に削除して os_log + Console.app 経由に統一.
 
 ### Mac Host — peer の自動 cleanup
-- ICE が `failed` で長時間張り付いた peer が `addRemoteCandidate_failed` を無限に warn し続け、
+- [ ] ICE が `failed` で長時間張り付いた peer が `addRemoteCandidate_failed` を無限に warn し続け、
   さらに新規 iPhone 接続を受けると Mac Host が**正常に応答できなくなる**現象を確認した
   (2026-05-14 の実機 debug で再現).
-- 暫定対処: Mac Host プロセスを再起動 (`kill && start`).
-- **やるべき**: `apps/mac-host/src/peer.ts` の `PeerManager` に「`state=.failed` が N 秒継続した
+- [ ] 暫定対処: Mac Host プロセスを再起動 (`kill && start`).
+- [ ] **やるべき**: `apps/mac-host/src/peer.ts` の `PeerManager` に「`state=.failed` が N 秒継続した
   peer を close + state から削除」「`signaling_welcome` 再受信時に保持中の peer を全消去」の
   どちらか (両方が望ましい) を実装. unit test も追加.
 
 ### iOS — 配布パス
-- `apps/ios/App/CodexLinkApp.swift` の `AutoConnect.fromBundledPairFile()` は
+- [ ] `apps/ios/App/CodexLinkApp.swift` の `AutoConnect.fromBundledPairFile()` は
   `xcrun devicectl device copy to ... Documents/codex-link-pair.json` で dev 機材から push する
   経路. End user は使えない.
-- **やるべき**: 上記 QR pairing が入ったらこの経路は削除して良い. dev 用に残すなら `#if DEBUG`.
+- [ ] **やるべき**: 上記 QR pairing が入ったらこの経路は削除して良い. dev 用に残すなら `#if DEBUG`.
 
 ### WS フレーム形式
-- `SignalingWebSocketClient.send` を **binary frame** から **text frame** に変えた
+- [ ] `SignalingWebSocketClient.send` を **binary frame** から **text frame** に変えた
   (`URLSessionWebSocketTask.Message.string`). Node `ws` ライブラリはどちらも受けるので必須ではないが、
   人間が `wireshark` 等で覗ける利点と、relay-side の他 client (Mac Host CLI) と揃える意味で text 推奨.
 
 ### iOS Simulator runtime
-- 実機 iPhone を iOS 26.5 に上げたら `xcodebuild` が "iOS 26.5 is not installed" でビルド不能になり、
+- [ ] 実機 iPhone を iOS 26.5 に上げたら `xcodebuild` が "iOS 26.5 is not installed" でビルド不能になり、
   `xcodebuild -downloadPlatform iOS` で iOS 26.5 Simulator runtime (~8.5 GB) を落として解消.
-- **やるべき**: `docs/deploy.md` または開発環境 setup ドキュメントに「iPhone iOS バージョン更新後は
+- [ ] **やるべき**: `docs/deploy.md` または開発環境 setup ドキュメントに「iPhone iOS バージョン更新後は
   対応 Simulator runtime を `xcodebuild -downloadPlatform iOS` で入れる」と明記.
 
 ## リスク / 留意点
