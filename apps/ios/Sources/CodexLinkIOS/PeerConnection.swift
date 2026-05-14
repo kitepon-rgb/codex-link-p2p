@@ -72,6 +72,9 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
     private var dcDelegate: DataChannelDelegate?
     private var pathPollTimer: Timer?
     private var lastReportedPath: PeerConnectionPath = .connecting
+    /// derivePath() で stats が想定形式と違って path 解決できなかった時、
+    /// 1 回だけ stats の type 集計を pcDiag に吐く. DEBUG-only な診断手段.
+    fileprivate var statsDumpedOnce = false
 
     public override init() {
         RTCInitializeSSL()
@@ -311,38 +314,88 @@ extension PeerConnection: RTCPeerConnectionDelegate {
     }
 
     private func derivePath(from report: RTCStatisticsReport) -> PeerConnectionPath {
-        // selected pair の candidate type を見て path を分類.
         let stats = report.statistics
-        // candidate-pair の selected 判定. iOS の libwebrtc 版は selected pair
-        // を `state == "succeeded"` AND `nominated == true` で示す.
-        // `nominated` フラグ取りこぼし対策に `state == "succeeded"` も拾う.
-        var selected: RTCStatistics? = nil
-        var fallback: RTCStatistics? = nil
-        for (_, s) in stats {
-            guard s.type == "candidate-pair" else { continue }
-            let state = (s.values["state"] as? String) ?? ""
-            let nominated = (s.values["nominated"] as? Bool) ?? false
-            if state == "succeeded" && nominated {
-                selected = s
-                break
+
+        // 1st choice: W3C 標準. transport エントリの selectedCandidatePairId が
+        //              実際に使われている candidate-pair を直接指す.
+        // 2nd choice: candidate-pair を scan して state="succeeded" を拾う
+        //              (transport が無い古い実装向け fallback).
+        let pair: RTCStatistics? = {
+            for (_, s) in stats where s.type == "transport" {
+                if let pairId = s.values["selectedCandidatePairId"] as? String,
+                   let p = stats[pairId] {
+                    return p
+                }
             }
-            if state == "succeeded" {
-                fallback = s
+            var succeeded: RTCStatistics? = nil
+            var nominated: RTCStatistics? = nil
+            for (_, s) in stats where s.type == "candidate-pair" {
+                let state = (s.values["state"] as? String)?.lowercased() ?? ""
+                guard state == "succeeded" else { continue }
+                let nom = (s.values["nominated"] as? Bool)
+                    ?? ((s.values["nominated"] as? NSNumber)?.boolValue ?? false)
+                if nom { nominated = s; break }
+                succeeded = succeeded ?? s
             }
-        }
-        let pair = selected ?? fallback
+            return nominated ?? succeeded
+        }()
+
         guard let pair = pair,
               let localId = pair.values["localCandidateId"] as? String,
               let remoteId = pair.values["remoteCandidateId"] as? String,
               let local = stats[localId],
               let remote = stats[remoteId]
-        else { return .connecting }
+        else {
+            dumpStatsSummaryOnce(stats, reason: "no-pair-or-candidate")
+            return .connecting
+        }
         let localType = (local.values["candidateType"] as? String) ?? ""
         let remoteType = (remote.values["candidateType"] as? String) ?? ""
+        // relay は TURN 経由なので「中継」.
         if localType == "relay" || remoteType == "relay" { return .turnRelayed }
-        if localType == "srflx" || remoteType == "srflx" { return .stunReflexive }
+        // srflx (STUN reflexive) / prflx (peer reflexive) はどちらも NAT 越えの
+        // P2P 直結. ユーザーから見ると「直結 (NAT越え)」.
+        // prflx は片側が STUN advertise していない経路 (ホスト同士の hairpin
+        // やフレッシュな relay-less NAT 経由) で出る.
+        let reflexive: Set<String> = ["srflx", "prflx"]
+        if reflexive.contains(localType) || reflexive.contains(remoteType) {
+            return .stunReflexive
+        }
         if localType == "host" && remoteType == "host" { return .direct }
+        // ここに来るのは type が空文字 / 未知 (例: framework が candidateType を
+        // 報告しない実装). 既に candidate-pair が succeeded で nominated されて
+        // いるなら直結扱いにする (Mac 側 peer.ts も同様の fallback).
+        let pairState = (pair.values["state"] as? String)?.lowercased() ?? ""
+        if pairState == "succeeded" {
+            dumpStatsSummaryOnce(
+                stats,
+                reason: "succeeded-but-unknown-types local=\(localType) remote=\(remoteType)"
+            )
+            return .direct
+        }
+        dumpStatsSummaryOnce(
+            stats,
+            reason: "unknown-types local=\(localType) remote=\(remoteType) state=\(pairState)"
+        )
         return .connecting
+    }
+
+    /// stats から path 判定できなかった時に 1 回だけ中身を pcDiag に吐く.
+    /// 別な framework / 別な stats 形式に遭遇した時の手がかり.
+    /// DEBUG ビルドの pcDiag 経由なので Release では no-op.
+    private func dumpStatsSummaryOnce(_ stats: [String: RTCStatistics], reason: String) {
+        if statsDumpedOnce { return }
+        statsDumpedOnce = true
+        var counts: [String: Int] = [:]
+        for (_, s) in stats { counts[s.type, default: 0] += 1 }
+        pcDiag("derivePath_dump reason=\(reason) types=\(counts) total=\(stats.count)")
+        // 関連がありそうな type の中身を全部吐く.
+        for (_, s) in stats {
+            let t = s.type
+            if t == "transport" || t.contains("candidate-pair") || t.contains("candidate") {
+                pcDiag("derivePath_entry type=\(t) values=\(s.values)")
+            }
+        }
     }
 }
 

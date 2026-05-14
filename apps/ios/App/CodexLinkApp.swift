@@ -446,19 +446,58 @@ private struct QRScannerView: UIViewControllerRepresentable {
         weak var coordinator: Coordinator?
         private let session = AVCaptureSession()
         private var previewLayer: AVCaptureVideoPreviewLayer?
+        private var didSetup = false
 
         override func viewDidLoad() {
             super.viewDidLoad()
             view.backgroundColor = .black
-            setupSession()
+            ensureCameraAuthorized { [weak self] granted in
+                guard let self = self else { return }
+                if !granted {
+                    self.coordinator?.parent.onError(
+                        "カメラの利用が許可されていません. 設定 > プライバシー > カメラ から Codex Link を有効にしてください."
+                    )
+                    return
+                }
+                self.setupSession()
+                self.didSetup = true
+                if self.isViewLoaded && self.view.window != nil {
+                    self.startSession()
+                }
+            }
+        }
+
+        /// 権限が未確認なら requestAccess を呼んで結果を main で返す.
+        /// 既に決まっていればその場で返す.
+        private func ensureCameraAuthorized(completion: @escaping (Bool) -> Void) {
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized:
+                completion(true)
+            case .notDetermined:
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    DispatchQueue.main.async { completion(granted) }
+                }
+            case .denied, .restricted:
+                completion(false)
+            @unknown default:
+                completion(false)
+            }
+        }
+
+        private func startSession() {
+            if session.isRunning { return }
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.session.startRunning()
+            }
         }
 
         override func viewWillAppear(_ animated: Bool) {
             super.viewWillAppear(animated)
-            if !session.isRunning {
-                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    self?.session.startRunning()
-                }
+            // setupSession() は権限取得後にしか走らないため、didSetup が true の
+            // 時だけ startSession する. それ以外は viewDidLoad の callback から
+            // 起動される.
+            if didSetup {
+                startSession()
             }
         }
 
