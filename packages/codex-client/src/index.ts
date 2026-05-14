@@ -86,8 +86,11 @@ export class CodexAppServerStdioClient implements CodexAppServerClient {
   private stdout: ReadlineInterface | null = null;
   private nextId = 1;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
+  private readonly options: CodexAppServerClientOptions;
 
-  constructor(private readonly options: CodexAppServerClientOptions = {}) {}
+  constructor(options: CodexAppServerClientOptions = {}) {
+    this.options = options;
+  }
 
   start(): Promise<void> {
     if (this.process) {
@@ -282,8 +285,11 @@ export class CodexAppServerWebSocketClient implements CodexAppServerClient {
   private ws: WebSocket | null = null;
   private nextId = 1;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
+  private readonly options: CodexAppServerWebSocketClientOptions;
 
-  constructor(private readonly options: CodexAppServerWebSocketClientOptions) {}
+  constructor(options: CodexAppServerWebSocketClientOptions) {
+    this.options = options;
+  }
 
   start(): Promise<void> {
     if (this.ws) return Promise.resolve();

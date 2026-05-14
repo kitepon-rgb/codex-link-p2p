@@ -39,8 +39,6 @@ describe("CodexLinkEvent discriminated union", () => {
   it("JSON round-trips a representative AssistantDeltaEvent", () => {
     const ev: AssistantDeltaEvent = {
       type: "assistant.delta",
-      sequence: asSequenceNumber(1),
-      timestamp: 1_700_000_000_000,
       threadId,
       turnId,
       text: "hello ",
@@ -55,8 +53,6 @@ describe("CodexLinkEvent discriminated union", () => {
   it("JSON round-trips a ThreadStartedEvent", () => {
     const ev: ThreadStartedEvent = {
       type: "thread.started",
-      sequence: asSequenceNumber(2),
-      timestamp: 1_700_000_000_001,
       thread: {
         id: threadId,
         projectId,
@@ -110,8 +106,6 @@ describe("CodexLinkEvent discriminated union", () => {
 
     const ev: AssistantDeltaEvent = {
       type: "assistant.delta",
-      sequence: asSequenceNumber(1),
-      timestamp: 0,
       threadId,
       turnId,
       text: "hi",
@@ -208,10 +202,10 @@ describe("CodexLinkSessionFrame (DataChannel wire)", () => {
     const frames: CodexLinkSessionFrame[] = [
       {
         kind: "event",
+        sequence: asSequenceNumber(1),
+        timestamp: 0,
         event: {
           type: "assistant.delta",
-          sequence: asSequenceNumber(1),
-          timestamp: 0,
           threadId,
           turnId,
           text: "x",

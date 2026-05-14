@@ -60,9 +60,12 @@ const help = (): string =>
   [
     "Usage:",
     "  codex-link-host init   [--relay URL] [--bootstrap-token T] [--display-name N] [--host-platform macos|windows|linux]",
-    "  codex-link-host start  [--relay URL]",
+    "  codex-link-host start  [--relay URL] [--use-null-codex]",
     "  codex-link-host pair   [--relay URL]   (issue a pairing code + QR for iPhone scanning)",
     "  codex-link-host help",
+    "",
+    "start flags:",
+    "  --use-null-codex    spawn の代わりに stub Codex を使う (Codex CLI 未 install 環境向け)",
     "",
     "Environment overrides:",
     "  CODEX_LINK_RELAY_URL            Default relay URL",
@@ -476,9 +479,11 @@ const main = async (): Promise<void> => {
 
   if (sub === "start") {
     const relayUrlOverride = stringArg(args, "relay");
+    const useNullCodex = args["use-null-codex"] === true;
     const started = await runStart({
       env,
       ...(relayUrlOverride !== undefined ? { relayUrlOverride } : {}),
+      ...(useNullCodex ? { useNullCodex: true } : {}),
     });
 
     const shutdown = async (): Promise<void> => {

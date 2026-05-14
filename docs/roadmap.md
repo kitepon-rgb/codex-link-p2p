@@ -6,6 +6,18 @@
 このドキュメントはそこから先 **MVP 完成までの Phase 10〜14** の計画書. MVP の定義と、各
 Phase で何を作る / 何を作らないかをここに集約する.
 
+## 進捗 (2026-05-15)
+
+| Phase | 状態 | コミット |
+|---|---|---|
+| 10 — Mac Host から Codex に実 wire | ✅ 完了 | `d31553b` |
+| 11 — Session protocol 完全化 + snapshot/ack | ✅ 完了 | `d31553b` (TS) / `6e496b0` (iOS) |
+| 12 — iPhone UI 親リポ同等 | ✅ 完了 (Threads / Settings / Status / Auto-scroll / Timeline row / 4-way approval) | `790594d` |
+| 13 — Live Activity (iOS 17+) | ✅ 完了 (Widget extension target + Dynamic Island + Lock screen) | `790594d` |
+| 14a — Mac Host launchd 化 | ✅ 完了 (`apps/mac-host/launchd/`) | `77717b8` |
+| 14b — README で end-user 手順 | ✅ 完了 | `77717b8` |
+| 14c — 実機 7 日 dogfood 検証 | ⏳ user 手動タスク (毎日業務で使う) | — |
+
 ---
 
 ## MVP 定義
