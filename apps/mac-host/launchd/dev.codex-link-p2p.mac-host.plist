@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Codex Link p2p Mac Host launchd agent.
+        Install:
+          cp launchd/dev.codex-link-p2p.mac-host.plist ~/Library/LaunchAgents/
+          launchctl load ~/Library/LaunchAgents/dev.codex-link-p2p.mac-host.plist
+        Uninstall:
+          launchctl unload ~/Library/LaunchAgents/dev.codex-link-p2p.mac-host.plist
+          rm ~/Library/LaunchAgents/dev.codex-link-p2p.mac-host.plist
+
+        旧 broker 版 (dev.codex-link.mac-host) を unload してから入れること.
+
+        Prerequisites (host.json は事前に init で作る):
+          codex-link-host init --bootstrap-token <T>
+          (~/.codex-link-p2p/host.json と token-store が生成される)
+    -->
+    <key>Label</key>
+    <string>dev.codex-link-p2p.mac-host</string>
+
+    <!-- 起動コマンド. node + cli.js path. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>__INSTALL_PATH__/apps/mac-host/dist/cli.js</string>
+        <string>start</string>
+    </array>
+
+    <!-- ログイン時に自動起動. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- クラッシュ時の自動再起動. SIGTERM や exit code 0 では再起動しない. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- 再起動を 10s に抑える. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- HOME / USER は launchd では自動で設定されない. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__USER_HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- stdout / stderr をローカルファイルに. -->
+    <key>StandardOutPath</key>
+    <string>__USER_HOME__/Library/Logs/codex-link-p2p-mac-host.log</string>
+    <key>StandardErrorPath</key>
+    <string>__USER_HOME__/Library/Logs/codex-link-p2p-mac-host.err</string>
+
+    <!-- 作業ディレクトリ. -->
+    <key>WorkingDirectory</key>
+    <string>__USER_HOME__</string>
+</dict>
+</plist>

@@ -32,7 +32,50 @@ Native binaries for WebRTC are pre-built via [`node-datachannel`](https://github
    codex-link-host start
    ```
 
-4. From the iPhone app, scan or type the pairing code printed by the host.
+4. In another terminal, issue a pairing code + QR code:
+
+   ```bash
+   codex-link-host pair
+   ```
+
+   The QR is printed to the terminal (block-character art). Open it in
+   Preview.app or any window large enough for the iPhone camera to read.
+
+5. On the iPhone:
+   1. Open the Codex Link app (fresh install if it was previously paired).
+   2. Tap **Scan QR** and read the code printed in step 4.
+   3. The app calls `/api/device-session/register` → `/api/device-session/pair`
+      on the Relay, then connects to the Mac Host over WebRTC DataChannel.
+   4. The header badge transitions from `接続中…` → `直結` / `直結 (NAT越え)` /
+      `中継` depending on the connection path.
+
+### Run as a launchd agent (recommended for daily use)
+
+Once `init` + `pair` work end-to-end, replace the manual `codex-link-host start`
+loop with a launchd agent so the host comes up at every login and auto-restarts
+on crash.
+
+```bash
+# From the repo root:
+pnpm --filter @codex-link/host build   # 必須: dist/cli.js を更新
+bash apps/mac-host/launchd/install-launchd.sh
+
+# Status:
+launchctl list | grep dev.codex-link
+tail -f ~/Library/Logs/codex-link-p2p-mac-host.log
+
+# Uninstall:
+launchctl unload ~/Library/LaunchAgents/dev.codex-link-p2p.mac-host.plist
+rm ~/Library/LaunchAgents/dev.codex-link-p2p.mac-host.plist
+```
+
+If you previously installed the broker-version agent (`dev.codex-link.mac-host`),
+unload it first to avoid both processes racing for the same WS slot:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/dev.codex-link.mac-host.plist
+rm ~/Library/LaunchAgents/dev.codex-link.mac-host.plist
+```
 
 ## Architecture invariants (do not violate)
 
@@ -46,6 +89,7 @@ Native binaries for WebRTC are pre-built via [`node-datachannel`](https://github
 ```
 codex-link-host init   [--relay URL] [--bootstrap-token T] [--display-name N] [--host-platform macos|windows|linux]
 codex-link-host start  [--relay URL]
+codex-link-host pair   [--relay URL]   # 1 回限りの pairing code + QR を発行
 codex-link-host help
 ```
 
