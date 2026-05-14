@@ -62,6 +62,14 @@ public final class AppLifecycle: ObservableObject {
     private let userId: UserId
     private let deviceId: DeviceId
 
+    #if os(iOS) && canImport(ActivityKit)
+    @available(iOS 17.0, *)
+    private static let liveActivityController = CodexLinkLiveActivityController()
+    #endif
+    /// 現在表示中のスレッド / ターン. AppLifecycle が ChangedEvent を受け取る
+    /// たびに更新し、Live Activity に渡す.
+    public private(set) var liveActivitySelection: CodexLinkSessionSelection = CodexLinkSessionSelection()
+
     public init(
         relayUrl: URL,
         sessionToken: String,
@@ -74,6 +82,7 @@ public final class AppLifecycle: ObservableObject {
         self.stunUrls = stunUrls
         self.userId = userId
         self.deviceId = deviceId
+        self.liveActivitySelection.hostId = hostId
         self.signaling = SignalingWebSocketClient(
             relayUrl: relayUrl,
             sessionToken: sessionToken
@@ -81,6 +90,35 @@ public final class AppLifecycle: ObservableObject {
         self.peer = PeerConnection()
         self.signaling.delegate = self
         self.peer.delegate = self
+    }
+
+    /// 外部 (CodexLinkRootView) から現在 UI 上で見ているスレッド / ターンを
+    /// セットする. Live Activity の visibility / deep link target に使う.
+    public func updateLiveActivitySelection(
+        projectId: ProjectId?,
+        threadId: ThreadId?,
+        activeTurnId: TurnId?
+    ) {
+        liveActivitySelection.projectId = projectId
+        liveActivitySelection.threadId = threadId
+        liveActivitySelection.activeTurnId = activeTurnId
+        syncLiveActivity()
+    }
+
+    private func syncLiveActivity() {
+        #if os(iOS) && canImport(ActivityKit)
+        if #available(iOS 17.0, *) {
+            let state = projection.state
+            let selection = liveActivitySelection
+            Task.detached(priority: .background) {
+                do {
+                    _ = try await Self.liveActivityController.sync(state: state, selection: selection)
+                } catch {
+                    // ActivityKit エラーは UI に出さない (権限 OFF など)
+                }
+            }
+        }
+        #endif
     }
 
     public func start() {
@@ -226,12 +264,36 @@ extension AppLifecycle: PeerConnectionDelegate {
             switch frame {
             case .event(_, _, let event):
                 self.projection.apply(event)
+                self.updateSelectionFromEvent(event)
             case .snapshotResponse(let response):
                 self.projection.applySnapshot(response.projection)
+                self.syncLiveActivity()
             case .uiAction, .snapshotRequest, .ack:
-                // Server frames addressed to host. Ignore on the client side.
                 break
             }
+        }
+    }
+
+    /// イベントから自動的に selection (= Live Activity の対象 thread/turn) を
+    /// 更新する. ユーザーが手動で thread 切替した場合は updateLiveActivitySelection()
+    /// で上書きできる.
+    private func updateSelectionFromEvent(_ event: CodexLinkEvent) {
+        switch event {
+        case .threadStarted(let thread):
+            liveActivitySelection.projectId = thread.projectId
+            liveActivitySelection.threadId = thread.id
+            liveActivitySelection.activeTurnId = nil
+            syncLiveActivity()
+        case .turnStatusChanged(let threadId, let turnId, _):
+            if liveActivitySelection.threadId == threadId {
+                liveActivitySelection.activeTurnId = turnId
+            }
+            syncLiveActivity()
+        case .approvalRequested, .approvalResolved, .assistantDelta, .assistantFinal,
+             .timelineItemStarted, .timelineItemCompleted, .transcriptItemRecorded:
+            syncLiveActivity()
+        default:
+            break
         }
     }
 

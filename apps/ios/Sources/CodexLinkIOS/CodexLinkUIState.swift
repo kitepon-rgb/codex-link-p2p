@@ -6,6 +6,26 @@
 import Foundation
 import SwiftUI
 
+/// 現在表示中のスレッド選択. Live Activity / deep link で参照する.
+public struct CodexLinkSessionSelection: Equatable, Sendable {
+    public var hostId: HostId?
+    public var projectId: ProjectId?
+    public var threadId: ThreadId?
+    public var activeTurnId: TurnId?
+
+    public init(
+        hostId: HostId? = nil,
+        projectId: ProjectId? = nil,
+        threadId: ThreadId? = nil,
+        activeTurnId: TurnId? = nil
+    ) {
+        self.hostId = hostId
+        self.projectId = projectId
+        self.threadId = threadId
+        self.activeTurnId = activeTurnId
+    }
+}
+
 @MainActor
 public final class CodexLinkUIState: ObservableObject {
 
@@ -14,6 +34,9 @@ public final class CodexLinkUIState: ObservableObject {
     @Published public var currentHostId: HostId?
     @Published public var pairingCode: String?
     @Published public var pairingCodeExpiresAt: Int?
+    /// 現在 iPhone が表示している thread / turn の selection. Live Activity の
+    /// visibility / deep link target を決めるのに使う.
+    @Published public var selection: CodexLinkSessionSelection = CodexLinkSessionSelection()
 
     public init() {}
 

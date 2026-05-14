@@ -18,6 +18,8 @@ public struct CodexLinkRootView: View {
 
     @State private var selectedThreadId: ThreadId?
     @State private var input: String = ""
+    @State private var showThreadsSheet: Bool = false
+    @State private var showSettingsSheet: Bool = false
 
     public init(lifecycle: AppLifecycle, uiState: CodexLinkUIState) {
         self.lifecycle = lifecycle
@@ -34,16 +36,62 @@ public struct CodexLinkRootView: View {
                 placeholder
             }
         }
+        .sheet(isPresented: $showThreadsSheet) {
+            ThreadsSheet(
+                state: lifecycle.projection.state,
+                selected: $selectedThreadId
+            ) { showThreadsSheet = false }
+        }
+        .sheet(isPresented: $showSettingsSheet) {
+            SettingsSheet(lifecycle: lifecycle) { showSettingsSheet = false }
+        }
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Text("Codex Link").font(.headline)
+        HStack(spacing: 10) {
+            Button {
+                showThreadsSheet = true
+            } label: {
+                Image(systemName: "bubble.left.and.bubble.right")
+            }
+            Text(currentThreadTitle).font(.headline).lineLimit(1)
             Spacer()
+            statusIndicator
             pathBadge
+            Button {
+                showSettingsSheet = true
+            } label: {
+                Image(systemName: "gearshape")
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private var currentThreadTitle: String {
+        guard let tid = selectedThreadId ?? lifecycle.projection.state.orderedThreadIds().first,
+              let thread = lifecycle.projection.state.thread(tid) else {
+            return "Codex Link"
+        }
+        return thread.title ?? "Untitled thread"
+    }
+
+    private var statusIndicator: some View {
+        let state = lifecycle.projection.state
+        let visibleThread = selectedThreadId ?? state.orderedThreadIds().first
+        let pending = visibleThread.flatMap { state.pendingApproval(for: $0) } != nil
+        let running = state.turnStatus.values.contains(.running)
+        let (label, color): (String, Color)
+        if pending {
+            (label, color) = ("承認待ち", .orange)
+        } else if running {
+            (label, color) = ("実行中", .blue)
+        } else {
+            (label, color) = ("待機", .secondary)
+        }
+        return Text(label)
+            .font(.caption2.bold())
+            .foregroundColor(color)
     }
 
     /// バッジは BOOTSTRAP.md の「path 単独 ↔ UI」設計どおり、
@@ -85,27 +133,42 @@ public struct CodexLinkRootView: View {
         let state = lifecycle.projection.state
         if let thread = state.thread(threadId) {
             VStack(spacing: 0) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(state.transcript(for: threadId), id: \.id) { item in
-                            transcriptRow(item: item)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 6) {
+                            ForEach(state.transcript(for: threadId), id: \.id) { item in
+                                transcriptRow(item: item).id(item.id)
+                            }
+                            ForEach(state.timeline(for: threadId), id: \.itemId) { entry in
+                                timelineRow(entry: entry).id("tl-\(entry.itemId.rawValue)")
+                            }
+                            let streaming = state.streamingAssistant(for: threadId)
+                            if !streaming.isEmpty,
+                               let streamingId = ItemId(rawValue: "streaming-\(threadId.rawValue)") {
+                                transcriptRow(item: TranscriptItem(
+                                    id: streamingId,
+                                    role: .assistant,
+                                    text: streaming
+                                ))
+                                .opacity(0.6)
+                                .id("streaming")
+                            }
+                            if let pending = state.pendingApproval(for: threadId) {
+                                approvalCard(pending).id("approval")
+                            }
+                            // Anchor for auto-scroll-to-bottom.
+                            Color.clear.frame(height: 1).id("bottom")
                         }
-                        let streaming = state.streamingAssistant(for: threadId)
-                        if !streaming.isEmpty,
-                           let streamingId = ItemId(rawValue: "streaming-\(threadId.rawValue)") {
-                            transcriptRow(item: TranscriptItem(
-                                id: streamingId,
-                                role: .assistant,
-                                text: streaming
-                            ))
-                            .opacity(0.6)
-                        }
-                        if let pending = state.pendingApproval(for: threadId) {
-                            approvalCard(pending)
-                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
+                    .onChange(of: state.transcript(for: threadId).count) { _ in
+                        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    .onChange(of: state.streamingAssistant(for: threadId)) { _ in
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                    .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
                 Divider()
                 inputBar(thread: thread)
@@ -118,12 +181,37 @@ public struct CodexLinkRootView: View {
         HStack(alignment: .top) {
             Text(item.role.rawValue)
                 .font(.caption2.bold())
-                .foregroundColor(.secondary)
+                .foregroundColor(item.role == .assistant ? .blue : .secondary)
                 .frame(width: 70, alignment: .leading)
             Text(item.text)
                 .font(.body)
             Spacer(minLength: 0)
         }
+    }
+
+    @ViewBuilder
+    private func timelineRow(entry: TimelineEntry) -> some View {
+        let (icon, color): (String, Color) = {
+            switch entry.status {
+            case .running: return ("circle.dotted", .blue)
+            case .completed: return ("checkmark.circle", .green)
+            case .failed: return ("xmark.circle", .red)
+            case .declined: return ("hand.raised", .orange)
+            }
+        }()
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).foregroundColor(color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.label).font(.caption.bold())
+                if let detail = entry.detail, !detail.isEmpty {
+                    Text(detail).font(.caption2).foregroundColor(.secondary).lineLimit(3)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(6)
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(6)
     }
 
     @ViewBuilder
@@ -190,6 +278,155 @@ public struct CodexLinkRootView: View {
             Spacer()
             Text("Waiting for Host…").foregroundColor(.secondary)
             Spacer()
+        }
+    }
+}
+
+// MARK: - Threads sheet
+
+@MainActor
+private struct ThreadsSheet: View {
+    let state: CodexLinkProjectionState
+    @Binding var selected: ThreadId?
+    let onClose: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Projects") {
+                    if state.projects.isEmpty {
+                        Text("プロジェクトは未取得です").foregroundColor(.secondary)
+                    } else {
+                        ForEach(state.projects) { p in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(p.name).font(.body)
+                                Text(p.pathLabel).font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                Section("Threads") {
+                    if state.orderedThreadIds().isEmpty {
+                        Text("スレッドはまだありません. Mac で Codex に prompt を投げると追加されます.")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(state.orderedThreadIds(), id: \.rawValue) { tid in
+                            if let thread = state.thread(tid) {
+                                Button {
+                                    selected = tid
+                                    onClose()
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(thread.title ?? "Untitled").font(.body)
+                                            Text(thread.id.rawValue).font(.caption2).foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        if selected == tid {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                                .foregroundColor(.primary)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Threads")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { onClose() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Settings sheet
+
+@MainActor
+private struct SettingsSheet: View {
+    @ObservedObject var lifecycle: AppLifecycle
+    let onClose: () -> Void
+
+    var body: some View {
+        let state = lifecycle.projection.state
+        return NavigationStack {
+            Form {
+                Section("Host") {
+                    if let caps = state.capabilities {
+                        labeledRow("Host ID", caps.hostId.rawValue)
+                        labeledRow("Platform", caps.platform)
+                        labeledRow("Codex version", caps.codexVersion)
+                    } else {
+                        Text("ホスト情報は未取得です").foregroundColor(.secondary)
+                    }
+                    if let account = state.account {
+                        labeledRow("ChatGPT", account.email)
+                        if let plan = account.planType {
+                            labeledRow("Plan", plan)
+                        }
+                    }
+                }
+                Section("Connection") {
+                    labeledRow("Path", pathLabel)
+                    labeledRow("Phase", phaseLabel)
+                    if let err = state.latestError {
+                        labeledRow("Last error", err)
+                    }
+                }
+                Section("Diagnostics") {
+                    if state.diagnostics.isEmpty {
+                        Text("診断情報なし").foregroundColor(.secondary)
+                    } else {
+                        ForEach(state.diagnostics.suffix(20), id: \.message) { d in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("[\(d.severity.rawValue)] \(d.scope)").font(.caption.bold())
+                                Text(d.message).font(.caption)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { onClose() }
+                }
+            }
+        }
+    }
+
+    private var pathLabel: String {
+        switch lifecycle.connectionPath {
+        case .connecting: return "Connecting…"
+        case .direct: return "Direct (LAN)"
+        case .stunReflexive: return "Direct (NAT越え)"
+        case .turnRelayed: return "Relayed (TURN)"
+        case .failed: return "Failed"
+        }
+    }
+
+    private var phaseLabel: String {
+        switch lifecycle.phase {
+        case .idle: return "Idle"
+        case .signalingConnecting: return "Signaling…"
+        case .signalingOpen: return "Signaling open"
+        case .awaitingTurnCredential: return "Awaiting TURN credential"
+        case .peerOffering: return "Offering"
+        case .peerConnecting: return "Peer connecting"
+        case .peerOpen: return "Peer open"
+        case .error(let m): return "Error: \(m)"
+        }
+    }
+
+    @ViewBuilder
+    private func labeledRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundColor(.secondary)
+            Spacer()
+            Text(value).font(.caption.monospaced()).textSelection(.enabled)
         }
     }
 }

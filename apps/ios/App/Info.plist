@@ -18,6 +18,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.codexlink.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>codexlink</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CodexLinkRelayURL</key>
@@ -26,6 +37,8 @@
 	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>QR code scanning (Mac Host との pairing で使用)</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -16,7 +16,7 @@ name: CodexLink
 options:
   bundleIdPrefix: dev.codexlink
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"  # Live Activity (ActivityKit) requires iOS 17+. kite の iPhone は iOS 26.5 で問題なし.
   createIntermediateGroups: true
   generateEmptyDirectories: true
   defaultConfig: Debug
@@ -45,6 +45,9 @@ targets:
     dependencies:
       - package: CodexLinkIOS
         product: CodexLinkIOS
+      - target: CodexLinkWidget
+        embed: true
+        codeSign: true
     info:
       path: App/Info.plist
       properties:
@@ -65,11 +68,41 @@ targets:
         NSCameraUsageDescription: "QR code scanning (Mac Host との pairing で使用)"
         CodexLinkRelayURL: "https://codex-link-p2p.kitepon.dynv6.net"
         ITSAppUsesNonExemptEncryption: false
+        NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.codexlink.deeplink
+            CFBundleURLSchemes:
+              - codexlink
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.codexlink.ios
         TARGETED_DEVICE_FAMILY: "1,2"  # iPhone + iPad
         ENABLE_PREVIEWS: YES
+        GENERATE_INFOPLIST_FILE: NO
+
+  CodexLinkWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widget
+    dependencies:
+      - package: CodexLinkIOS
+        product: CodexLinkIOS
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Codex Link Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.codexlink.ios.Widget
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
         GENERATE_INFOPLIST_FILE: NO
 
 schemes:
