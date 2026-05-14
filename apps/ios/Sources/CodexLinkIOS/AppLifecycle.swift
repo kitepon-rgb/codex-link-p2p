@@ -69,6 +69,11 @@ public final class AppLifecycle: ObservableObject {
     /// 現在表示中のスレッド / ターン. AppLifecycle が ChangedEvent を受け取る
     /// たびに更新し、Live Activity に渡す.
     public private(set) var liveActivitySelection: CodexLinkSessionSelection = CodexLinkSessionSelection()
+    /// Live Activity の sync を rate-limit するための debounce timer.
+    /// 連続 streaming delta で ActivityKit に高頻度 update を投げない.
+    private var liveActivityDebounceTask: Task<Void, Never>?
+    /// 最後に sync を投げた時刻 (Live Activity update の rate limit 用).
+    private var lastLiveActivitySyncAt: Date = Date.distantPast
 
     public init(
         relayUrl: URL,
@@ -105,16 +110,26 @@ public final class AppLifecycle: ObservableObject {
         syncLiveActivity()
     }
 
+    /// Live Activity の sync は 500ms ごとに 1 回まで. streaming delta 等で
+    /// 連続 event が来ても、最後の event の 500ms 後に 1 回だけ ActivityKit に
+    /// update を投げる. これで Live Activity の rate limit に引っかからず、
+    /// CPU / battery にも優しい.
     private func syncLiveActivity() {
         #if os(iOS) && canImport(ActivityKit)
         if #available(iOS 17.0, *) {
-            let state = projection.state
-            let selection = liveActivitySelection
-            Task.detached(priority: .background) {
-                do {
-                    _ = try await Self.liveActivityController.sync(state: state, selection: selection)
-                } catch {
-                    // ActivityKit エラーは UI に出さない (権限 OFF など)
+            liveActivityDebounceTask?.cancel()
+            liveActivityDebounceTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                guard let self = self, !Task.isCancelled else { return }
+                self.lastLiveActivitySyncAt = Date()
+                let state = self.projection.state
+                let selection = self.liveActivitySelection
+                Task.detached(priority: .background) {
+                    do {
+                        _ = try await Self.liveActivityController.sync(state: state, selection: selection)
+                    } catch {
+                        // ActivityKit エラーは UI に出さない (権限 OFF など)
+                    }
                 }
             }
         }

@@ -28,7 +28,7 @@ import {
   writeHostConfig,
 } from "./config.js";
 import { detectCapabilities } from "./capabilities.js";
-import { NullCodexClient, startCodex } from "./codex.js";
+import { NullCodexClient, ResilientCodexClient } from "./codex.js";
 import { PeerManager, type PeerKey } from "./peer.js";
 import {
   SignalingClient,
@@ -235,25 +235,22 @@ export const runStart = async (opts: StartOptions): Promise<StartedHost> => {
       onServerRequest: (r) => session.handleCodexServerRequest(r),
     });
   } else {
-    const started = await startCodex({
+    const resilient = new ResilientCodexClient({
       codexCommand: config.codexCommand,
       onNotification: (n) => session.handleCodexNotification(n),
       onServerRequest: (r) => session.handleCodexServerRequest(r),
+      onRespawn: (info) => log("warn", "codex_respawned", info as unknown as Record<string, unknown>),
     });
-    codex = started.client;
+    await resilient.start();
+    codex = resilient;
     codexCleanup = async () => {
       try {
-        await started.client.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        started.childProcess.kill("SIGTERM");
+        await resilient.close();
       } catch {
         /* ignore */
       }
     };
-    log("info", "codex_app_server_started", { port: started.port, url: started.url });
+    log("info", "codex_app_server_started", { resilient: true });
   }
 
   const turnUrls = opts.turnUrls ?? ["stun:stun.l.google.com:19302"];

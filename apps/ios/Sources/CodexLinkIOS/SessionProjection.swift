@@ -141,12 +141,22 @@ public struct CodexLinkProjectionState: Equatable, Sendable {
         threadsById[id]
     }
 
+    /// 長時間 session で transcript / timeline が無制限に成長して iPhone の
+    /// メモリ / scroll パフォーマンスを潰さないよう、内部リングバッファに上限を
+    /// 設ける. 上限を超えたら **先頭を捨てる** (UI 上は古い transcript が消える
+    /// ので、必要なら snapshot で取り直す前提).
+    private static let transcriptMaxCount = 500
+    private static let timelineMaxCount = 500
+
     private mutating func recordTranscriptItem(_ item: TranscriptItem) {
         if let i = transcript.firstIndex(where: { $0.id == item.id }) {
             transcript[i] = item
             return
         }
         transcript.append(item)
+        if transcript.count > Self.transcriptMaxCount {
+            transcript.removeFirst(transcript.count - Self.transcriptMaxCount)
+        }
     }
 
     private mutating func upsertTimelineItem(_ entry: TimelineEntry) {
@@ -155,6 +165,9 @@ public struct CodexLinkProjectionState: Equatable, Sendable {
             return
         }
         timeline.append(entry)
+        if timeline.count > Self.timelineMaxCount {
+            timeline.removeFirst(timeline.count - Self.timelineMaxCount)
+        }
     }
 }
 

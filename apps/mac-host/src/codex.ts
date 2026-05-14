@@ -186,3 +186,140 @@ export class NullCodexClient implements CodexAppServerClient {
 // ===== Re-export option types so cli / tests can type their callbacks =====
 
 export type { CodexAppServerClient, CodexAppServerClientOptions, JsonRpcNotification, JsonRpcServerRequest };
+
+// ===== ResilientCodexClient =====
+//
+// `startCodex()` で spawn した codex app-server プロセスが落ちた時に自動で
+// 再 spawn + WS 再接続する wrapper. 7 日 dogfood で codex が一度でも crash
+// したら手動再起動が必要、という痛みを解消する.
+//
+// 設計:
+// - inner client (生 CodexAppServerWebSocketClient) を保持し、すべての method
+//   をその時の inner にフォワードする.
+// - child process の exit を listen し、graceful なら止める. 異常終了なら
+//   指数バックオフで再 spawn.
+// - 再 spawn 中の request は queue する (現状は throw する単純設計; 必要なら
+//   queue 化).
+
+export interface ResilientCodexOptions extends StartCodexOptions {
+  readonly minBackoffMs?: number;
+  readonly maxBackoffMs?: number;
+  readonly onRespawn?: (info: { attempt: number; reason: string; port: number | null }) => void;
+}
+
+export class ResilientCodexClient implements CodexAppServerClient {
+  private inner: CodexAppServerClient | null = null;
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private respawnAttempts = 0;
+  private stopped = false;
+  private readonly options: ResilientCodexOptions;
+
+  constructor(options: ResilientCodexOptions = {}) {
+    this.options = options;
+  }
+
+  /**
+   * 初回 spawn. 失敗したら throw (= Mac Host 起動失敗). 起動後の crash は
+   * resilient に再 spawn する.
+   */
+  async start(): Promise<void> {
+    await this.spawnOnce();
+  }
+
+  private async spawnOnce(): Promise<void> {
+    const opts: StartCodexOptions = {
+      ...this.options,
+      onNotification: (n) => this.options.onNotification?.(n),
+      onServerRequest: (r) => this.options.onServerRequest?.(r),
+    };
+    const started = await startCodex(opts);
+    this.inner = started.client;
+    this.child = started.childProcess;
+    this.respawnAttempts = 0;
+
+    // crash 検出.
+    const handleExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (this.stopped) return;
+      this.inner = null;
+      this.child = null;
+      this.scheduleRespawn(`codex exited code=${code} signal=${signal}`);
+    };
+    started.childProcess.once("exit", handleExit);
+  }
+
+  private scheduleRespawn(reason: string): void {
+    if (this.stopped) return;
+    this.respawnAttempts += 1;
+    const base = this.options.minBackoffMs ?? 500;
+    const max = this.options.maxBackoffMs ?? 30_000;
+    const wait = Math.min(base * Math.pow(2, this.respawnAttempts - 1), max);
+    setTimeout(() => {
+      if (this.stopped) return;
+      this.spawnOnce().then(
+        () => {
+          this.options.onRespawn?.({
+            attempt: this.respawnAttempts,
+            reason,
+            port: null,
+          });
+        },
+        () => {
+          // 失敗したら再 schedule.
+          this.scheduleRespawn(`respawn-failed-after:${reason}`);
+        },
+      );
+    }, wait).unref?.();
+  }
+
+  // ===== CodexAppServerClient delegation =====
+
+  async initialize(): Promise<unknown> {
+    return this.requireInner().initialize();
+  }
+  request(method: string, params?: unknown): Promise<unknown> {
+    return this.requireInner().request(method, params);
+  }
+  startThread(params: unknown): Promise<unknown> { return this.requireInner().startThread(params); }
+  resumeThread(params: unknown): Promise<unknown> { return this.requireInner().resumeThread(params); }
+  startTurn(params: unknown): Promise<unknown> { return this.requireInner().startTurn(params); }
+  steerTurn(params: unknown): Promise<unknown> { return this.requireInner().steerTurn(params); }
+  interruptTurn(params: unknown): Promise<unknown> { return this.requireInner().interruptTurn(params); }
+  listModels(params?: unknown): Promise<unknown> { return this.requireInner().listModels(params); }
+  listExperimentalFeatures(params?: unknown): Promise<unknown> { return this.requireInner().listExperimentalFeatures(params); }
+  readConfig(params: unknown): Promise<unknown> { return this.requireInner().readConfig(params); }
+  listThreads(params?: unknown): Promise<unknown> { return this.requireInner().listThreads(params); }
+  readThread(params: unknown): Promise<unknown> { return this.requireInner().readThread(params); }
+  listThreadTurns(params: unknown): Promise<unknown> { return this.requireInner().listThreadTurns(params); }
+  respondToServerRequest(id: JsonRpcId, result: unknown): void {
+    this.requireInner().respondToServerRequest(id, result);
+  }
+  notify(method: string, params?: unknown): void {
+    this.requireInner().notify(method, params);
+  }
+  async close(): Promise<void> {
+    this.stopped = true;
+    try {
+      await this.inner?.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.child?.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+    this.inner = null;
+    this.child = null;
+  }
+
+  isRunning(): boolean {
+    return this.inner !== null && !this.stopped;
+  }
+
+  private requireInner(): CodexAppServerClient {
+    if (this.inner === null) {
+      throw new Error("codex app-server is not currently connected (respawning?)");
+    }
+    return this.inner;
+  }
+}
