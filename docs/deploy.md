@@ -224,6 +224,39 @@ turnutils_uclient -v -y \
 | coturn が TLS で連携失敗                         | Caddy が `codex-link-p2p.kitepon.dynv6.net` の cert を発行したか. `caddy_data` volume 内に `.crt` / `.key` が出ているか |
 | 接続経路バッジが常に `turn`                      | NAT が両側 symmetric. これは TURN 必須なので想定内    |
 
+## 開発環境メモ
+
+### iPhone 実機ビルド時の Simulator runtime
+
+実機 iPhone を新しい iOS にアップデートすると、その iOS バージョンに対応した
+**Simulator runtime** が Xcode に入っていない状態になり、`xcodebuild` が
+
+```
+error: iOS 26.5 is not installed. To use this SDK, install the iOS 26.5 Simulator runtime.
+```
+
+のようなエラーで失敗する. 実機ビルドであっても Xcode の build system は対応
+runtime の存在を要求する.
+
+対応 runtime を入れる:
+
+```sh
+# 利用可能な platform 一覧 (現在の Xcode に対応するもの)
+xcodebuild -showsdks
+
+# 不足している iOS runtime を取得 (~8.5 GB). 対話 UI が出ないので CI でも使える.
+xcodebuild -downloadPlatform iOS
+```
+
+特定バージョンだけ欲しい時:
+
+```sh
+xcrun simctl runtime install <path-to-dmg>
+# あるいは Xcode → Settings → Platforms から GUI で
+```
+
+iPhone 側を iOS アップデートする都度確認するのが安全.
+
 ## 関連
 
 - [architecture.md](architecture.md) — 全体トポロジ

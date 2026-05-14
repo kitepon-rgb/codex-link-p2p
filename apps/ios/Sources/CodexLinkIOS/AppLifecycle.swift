@@ -14,7 +14,11 @@ import Foundation
 
 /// Diagnostics: framework code writes to the same file as app's diag().
 /// Path = Documents/codex-link-debug.log.
+///
+/// DEBUG ビルド時のみ動作する. Release では no-op になり NSLog も file writer も
+/// 走らない. 実機の本番診断は Console.app 経由 (os_log) に任せる.
 private func fwDiag(_ msg: String) {
+    #if DEBUG
     NSLog("[codex-link] %@", msg)
     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
     guard let path = docs?.appendingPathComponent("codex-link-debug.log") else { return }
@@ -29,6 +33,7 @@ private func fwDiag(_ msg: String) {
     } else {
         try? data.write(to: path)
     }
+    #endif
 }
 
 @MainActor

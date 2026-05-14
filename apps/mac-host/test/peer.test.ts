@@ -236,3 +236,122 @@ describe("PeerManager (in-process answerer)", () => {
     expect(peerManager.broadcastFrame({ kind: "ack", sequence: asSequenceNumber(0) })).toBe(0);
   });
 });
+
+// stale peer cleanup の単体検証. PeerEntry を直接差し込んで PeerConnection の
+// 実起動 (node-datachannel) を回避する. close 呼出だけが必要なのでスタブで足りる.
+describe("PeerManager stale-peer cleanup", () => {
+  const otherUser = asUserId("usr_other");
+  const otherDevice = asDeviceId("dev_other");
+
+  interface StubPeer {
+    closed: boolean;
+    close: () => void;
+  }
+  const makeStubPeer = (): StubPeer => {
+    const s: StubPeer = {
+      closed: false,
+      close(): void {
+        s.closed = true;
+      },
+    };
+    return s;
+  };
+
+  // PeerEntry を作って peers Map に直接差し込む helper.
+  const insertFakeEntry = (
+    pm: PeerManager,
+    key: { userId: typeof userId; deviceId: typeof deviceId },
+    state: "connected" | "failed",
+    failedSince: number | null,
+  ): StubPeer => {
+    const pc = makeStubPeer();
+    const entry = {
+      key,
+      pc,
+      dc: null,
+      state,
+      connectionPath: state === "failed" ? "failed" : "direct",
+      failedSince,
+    };
+    const id = `${key.userId as string}:${key.deviceId as string}`;
+    (pm as unknown as { peers: Map<string, unknown> }).peers.set(id, entry);
+    return pc;
+  };
+
+  it("pruneFailedPeers removes peers whose failedSince exceeds the cleanup window", () => {
+    let now = 1_000_000;
+    const pm = new PeerManager(
+      {
+        hostId,
+        iceServers: [],
+        failedCleanupMs: 10_000,
+        clock: () => now,
+      },
+      { onLocalSignal: () => {} },
+    );
+    const stale = insertFakeEntry(pm, { userId, deviceId }, "failed", now - 11_000);
+    const recent = insertFakeEntry(
+      pm,
+      { userId: otherUser, deviceId: otherDevice },
+      "failed",
+      now - 1_000,
+    );
+
+    const removed = pm.pruneFailedPeers();
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.userId).toBe(userId);
+    expect(stale.closed).toBe(true);
+    expect(recent.closed).toBe(false);
+    expect(pm.hasPeer({ userId, deviceId })).toBe(false);
+    expect(pm.hasPeer({ userId: otherUser, deviceId: otherDevice })).toBe(true);
+
+    // 時間を進めると残りも対象になる.
+    now += 11_000;
+    const removed2 = pm.pruneFailedPeers();
+    expect(removed2).toHaveLength(1);
+    expect(recent.closed).toBe(true);
+    expect(pm.peerCount()).toBe(0);
+  });
+
+  it("pruneFailedPeers ignores connected peers", () => {
+    const pm = new PeerManager(
+      { hostId, iceServers: [], failedCleanupMs: 1_000, clock: () => 5_000 },
+      { onLocalSignal: () => {} },
+    );
+    const stub = insertFakeEntry(pm, { userId, deviceId }, "connected", null);
+    expect(pm.pruneFailedPeers()).toHaveLength(0);
+    expect(stub.closed).toBe(false);
+    expect(pm.hasPeer({ userId, deviceId })).toBe(true);
+  });
+
+  it("dropAllPeers closes every peer and reports them", () => {
+    const logs: Array<{ msg: string; extra: Record<string, unknown> | undefined }> = [];
+    const pm = new PeerManager(
+      { hostId, iceServers: [] },
+      {
+        onLocalSignal: () => {},
+        onLog: (_lvl, msg, extra) => logs.push({ msg, extra }),
+      },
+    );
+    const a = insertFakeEntry(pm, { userId, deviceId }, "connected", null);
+    const b = insertFakeEntry(
+      pm,
+      { userId: otherUser, deviceId: otherDevice },
+      "failed",
+      Date.now(),
+    );
+
+    const dropped = pm.dropAllPeers();
+    expect(dropped).toHaveLength(2);
+    expect(a.closed).toBe(true);
+    expect(b.closed).toBe(true);
+    expect(pm.peerCount()).toBe(0);
+    expect(logs.some((l) => l.msg === "peer_drop_all" && l.extra?.count === 2)).toBe(true);
+
+    // 2 度目は no-op (ログも出ない).
+    const logsBefore = logs.length;
+    const dropped2 = pm.dropAllPeers();
+    expect(dropped2).toHaveLength(0);
+    expect(logs.length).toBe(logsBefore);
+  });
+});

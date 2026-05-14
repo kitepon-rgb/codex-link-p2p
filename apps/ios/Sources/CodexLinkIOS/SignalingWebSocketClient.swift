@@ -12,7 +12,12 @@
 
 import Foundation
 
+/// Diagnostics: signaling client の状態を Documents/codex-link-debug.log に追記.
+///
+/// DEBUG ビルド時のみ動作する. Release では no-op になり NSLog も file writer も
+/// 走らない. 実機の本番診断は Console.app 経由 (os_log) に任せる.
 private func sigClientLog(_ msg: String) {
+    #if DEBUG
     NSLog("[codex-link] %@", msg)
     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
     guard let path = docs?.appendingPathComponent("codex-link-debug.log") else { return }
@@ -27,6 +32,7 @@ private func sigClientLog(_ msg: String) {
     } else {
         try? data.write(to: path)
     }
+    #endif
 }
 
 public enum SignalingClientState: Sendable {
@@ -76,11 +82,11 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
     public var currentState: SignalingClientState { state }
 
     public func start() {
-        NSLog("[codex-link] SignalingClient.start() called, relayUrl=%@", relayUrl.absoluteString)
+        sigClientLog("SignalingClient.start() called, relayUrl=\(relayUrl.absoluteString)")
         queue.async { [weak self] in
             guard let self = self else { return }
             guard self.state == .idle || self.state == .closed else {
-                NSLog("[codex-link] start() ignored, state=%@", String(describing: self.state))
+                sigClientLog("start() ignored, state=\(String(describing: self.state))")
                 return
             }
             self.intentionallyClosed = false
@@ -114,7 +120,6 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
         do {
             data = try encoder.encode(message)
         } catch {
-            NSLog("[codex-link] send encode FAILED: %@", error.localizedDescription)
             sigClientLog("send encode FAILED: \(error.localizedDescription)")
             return
         }
@@ -147,7 +152,7 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
         if !url.absoluteString.hasSuffix("/api/relay") {
             url = url.appendingPathComponent("/api/relay")
         }
-        NSLog("[codex-link] connect() opening WS to %@", url.absoluteString)
+        sigClientLog("connect() opening WS to \(url.absoluteString)")
         var req = URLRequest(url: url)
         req.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
         let t = session.webSocketTask(with: req)
@@ -165,7 +170,7 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
             self.queue.async {
                 switch result {
                 case .success(let message):
-                    NSLog("[codex-link] WS received message")
+                    sigClientLog("WS received message")
                     if self.state != .open {
                         self.reconnectAttempts = 0
                         self.setState(.open)
@@ -174,7 +179,7 @@ public final class SignalingWebSocketClient: NSObject, @unchecked Sendable {
                     self.handleIncoming(message)
                     self.readNext(task: task)
                 case .failure(let err):
-                    NSLog("[codex-link] WS failure: %@", err.localizedDescription)
+                    sigClientLog("WS failure: \(err.localizedDescription)")
                     if self.intentionallyClosed {
                         self.setState(.closed)
                         return

@@ -18,6 +18,8 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import qrcode from "qrcode-terminal";
+
 import {
   DEFAULT_RELAY_URL,
   loadHostConfig,
@@ -60,7 +62,7 @@ const help = (): string =>
     "Usage:",
     "  codex-link-host init   [--relay URL] [--bootstrap-token T] [--display-name N] [--host-platform macos|windows|linux]",
     "  codex-link-host start  [--relay URL]",
-    "  codex-link-host pair   [--relay URL]   (issue a one-shot pairing code, prints to stdout)",
+    "  codex-link-host pair   [--relay URL]   (issue a pairing code + QR for iPhone scanning)",
     "  codex-link-host help",
     "",
     "Environment overrides:",
@@ -254,6 +256,10 @@ export const runStart = async (opts: StartOptions): Promise<StartedHost> => {
         userId: info.userId,
         deviceId: info.deviceId,
       });
+      // 前回 WS 接続で確立した peer は再 welcome 後は相手側 (Relay / iPhone)
+      // から見て stale なので一旦全消去する. 初回 welcome では peer 0 なので
+      // no-op.
+      peerManager.dropAllPeers();
       // announce 直後に pairing code を作るかは init で済んでいる前提なので
       // 自動では作らない. `pair` subcommand を将来追加.
       signaling.announce(config.hostId);
@@ -354,8 +360,41 @@ export const runPair = async (opts: PairOptions): Promise<void> => {
     signaling.start();
   });
 
-  STDOUT.write(`${code}\n`);
+  // QR の payload: iPhone は relayUrl で `/api/device-session/register` を叩いて
+  // 新規 (userId, deviceId, sessionToken) を取得し、その Bearer で
+  // `/api/device-session/pair` に pairingCode + hostId を投げて HostAccess を
+  // grant してもらう. iOS 側 OnboardingView の QR scanner がこの JSON を decode
+  // してそのまま使う.
+  const payload: PairingPayload = {
+    v: 1,
+    relayUrl,
+    pairingCode: code,
+    hostId: config.hostId as string,
+  };
+  const json = JSON.stringify(payload);
+
+  STDOUT.write(`\nPairing code: ${code}\n`);
+  STDOUT.write(`Relay URL:    ${relayUrl}\n`);
+  STDOUT.write(`Host ID:      ${config.hostId as string}\n\n`);
+  STDOUT.write("Scan this QR with the iPhone app:\n\n");
+  // qrcode-terminal は callback で render 結果を返す. console には書き込まず、
+  // STDOUT に統一する.
+  await new Promise<void>((resolveDraw) => {
+    qrcode.generate(json, { small: true }, (rendered) => {
+      STDOUT.write(`${rendered}\n`);
+      resolveDraw();
+    });
+  });
+  STDOUT.write("(or copy the JSON below into the app)\n");
+  STDOUT.write(`${json}\n`);
 };
+
+export interface PairingPayload {
+  readonly v: 1;
+  readonly relayUrl: string;
+  readonly pairingCode: string;
+  readonly hostId: string;
+}
 
 const toCliLevel = (
   l: "debug" | "info" | "warn" | "error",

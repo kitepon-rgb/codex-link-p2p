@@ -40,6 +40,10 @@ export const DATA_CHANNEL_LABEL = "codex-link-session";
 export interface PeerConfig {
   readonly hostId: HostId;
   readonly iceServers: readonly string[]; // stun: / turn: / turns: URLs
+  // state=failed が継続したら自動 close する閾値. 既定 10s.
+  readonly failedCleanupMs?: number;
+  // 時刻ソース (テストで差し替え可能).
+  readonly clock?: () => number;
 }
 
 export interface PeerKey {
@@ -96,6 +100,8 @@ interface PeerEntry {
   dc: DataChannel | null;
   state: RtcConnectionState;
   connectionPath: ConnectionPath;
+  // state が 'failed' に入った時刻. failed 以外に戻ったら null に戻す.
+  failedSince: number | null;
 }
 
 // ===== PeerManager =====
@@ -104,6 +110,8 @@ export class PeerManager {
   private readonly peers = new Map<string, PeerEntry>();
   private readonly handlers: PeerHandlers;
   private readonly config: PeerConfig;
+  private readonly failedCleanupMs: number;
+  private readonly clock: () => number;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   // ICE candidate を base64 で envelope に詰めるが、node-datachannel の
   // addRemoteCandidate は plain text candidate を期待する. なので
@@ -112,14 +120,17 @@ export class PeerManager {
   constructor(config: PeerConfig, handlers: PeerHandlers) {
     this.config = config;
     this.handlers = handlers;
+    this.failedCleanupMs = config.failedCleanupMs ?? 10_000;
+    this.clock = config.clock ?? (() => Date.now());
   }
 
   startStatsLoop(intervalMs = 5_000): void {
     if (this.statsTimer !== null) return;
     this.statsTimer = setInterval(() => {
-      for (const entry of this.peers.values()) {
+      for (const entry of [...this.peers.values()]) {
         this.refreshConnectionPath(entry);
       }
+      this.pruneFailedPeers();
     }, intervalMs);
   }
 
@@ -255,8 +266,49 @@ export class PeerManager {
     this.stopStatsLoop();
   }
 
+  // 全 peer を close する. closeAll と違って stats loop は止めない.
+  // 用途: signaling の再 welcome を受けた時の「前回 WS で確立した peer は
+  // 相手側 (Relay / iPhone) から見て stale なので一旦全消去」.
+  dropAllPeers(): readonly PeerKey[] {
+    const dropped: PeerKey[] = [];
+    for (const entry of [...this.peers.values()]) {
+      dropped.push(entry.key);
+      this.closePeer(entry.key);
+    }
+    if (dropped.length > 0) {
+      this.handlers.onLog?.("info", "peer_drop_all", { count: dropped.length });
+    }
+    return dropped;
+  }
+
+  // state=failed が failedCleanupMs を超えて継続した peer を close + 削除する.
+  // 戻り値は実際に削除した peer の key.
+  pruneFailedPeers(): readonly PeerKey[] {
+    const removed: PeerKey[] = [];
+    const now = this.clock();
+    for (const entry of [...this.peers.values()]) {
+      if (
+        entry.failedSince !== null &&
+        now - entry.failedSince >= this.failedCleanupMs
+      ) {
+        const elapsedMs = now - entry.failedSince;
+        this.handlers.onLog?.("info", "peer_cleanup_failed_stale", {
+          peer: peerKey(entry.key),
+          elapsedMs,
+        });
+        this.closePeer(entry.key);
+        removed.push(entry.key);
+      }
+    }
+    return removed;
+  }
+
   hasPeer(key: PeerKey): boolean {
     return this.peers.has(peerKey(key));
+  }
+
+  peerCount(): number {
+    return this.peers.size;
   }
 
   stats(key: PeerKey): PeerStats | null {
@@ -300,6 +352,7 @@ export class PeerManager {
       dc: null,
       state: "new",
       connectionPath: "connecting",
+      failedSince: null,
     };
     this.peers.set(id, entry);
 
@@ -377,6 +430,15 @@ export class PeerManager {
   }
 
   private refreshConnectionPath(entry: PeerEntry): void {
+    // failed 状態の入り口/出口を failedSince に反映 (cleanup タイマ用).
+    if (entry.state === "failed") {
+      if (entry.failedSince === null) {
+        entry.failedSince = this.clock();
+      }
+    } else if (entry.failedSince !== null) {
+      entry.failedSince = null;
+    }
+
     const selected = entry.pc.getSelectedCandidatePair?.();
     let path: ConnectionPath = "connecting";
     if (entry.state === "failed") {

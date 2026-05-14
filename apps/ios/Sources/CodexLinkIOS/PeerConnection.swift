@@ -19,7 +19,12 @@ import WebRTC
 
 private let log = Logger(subsystem: "dev.codexlink", category: "peer")
 
+/// Diagnostics: PeerConnection 内部状態を Documents/codex-link-debug.log にも追記.
+///
+/// DEBUG ビルド時のみ動作する. Release では no-op になり NSLog も file writer も
+/// 走らない. 実機の本番診断は Console.app 経由 (os_log via `log`) に任せる.
 private func pcDiag(_ msg: String) {
+    #if DEBUG
     NSLog("[codex-link] %@", msg)
     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
     guard let path = docs?.appendingPathComponent("codex-link-debug.log") else { return }
@@ -34,6 +39,7 @@ private func pcDiag(_ msg: String) {
     } else {
         try? data.write(to: path)
     }
+    #endif
 }
 
 public let kCodexLinkDataChannelLabel = "codex-link-session"
@@ -236,7 +242,7 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
 
     // ===== DataChannel delegate forwarder =====
     fileprivate func handleDataChannelOpen() {
-        NSLog("[codex-link] dc_open")
+        pcDiag("dc_open")
         delegate?.peer(self, didOpenDataChannel: ())
     }
 
@@ -272,7 +278,7 @@ extension PeerConnection: RTCPeerConnectionDelegate {
         case .count: mapped = .new
         @unknown default: mapped = .new
         }
-        NSLog("[codex-link] ice_state: %@", String(describing: mapped))
+        pcDiag("ice_state: \(String(describing: mapped))")
         delegate?.peer(self, didChangeState: mapped)
 
         // selected candidate pair から path を導出.
@@ -350,7 +356,7 @@ private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unch
     }
 
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        NSLog("[codex-link] dc_state: %@", String(describing: dataChannel.readyState))
+        pcDiag("dc_state: \(String(describing: dataChannel.readyState))")
         if dataChannel.readyState == .open {
             parent?.handleDataChannelOpen()
         }
