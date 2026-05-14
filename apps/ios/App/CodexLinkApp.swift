@@ -62,24 +62,41 @@ struct CodexLinkApp: App {
 struct ContentView: View {
     @State private var lifecycle: AppLifecycle?
     @StateObject private var uiState = CodexLinkUIState()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        if let lifecycle {
-            CodexLinkRootView(lifecycle: lifecycle, uiState: uiState)
-        } else if let autoLc = AutoConnect.resolve() {
-            CodexLinkRootView(lifecycle: autoLc, uiState: uiState)
-                .onAppear {
-                    diag("ContentView onAppear: auto-connect path")
-                    self.lifecycle = autoLc
-                    autoLc.start()
-                    diag("autoLc.start() returned")
+        Group {
+            if let lifecycle {
+                CodexLinkRootView(lifecycle: lifecycle, uiState: uiState)
+            } else if let autoLc = AutoConnect.resolve() {
+                CodexLinkRootView(lifecycle: autoLc, uiState: uiState)
+                    .onAppear {
+                        diag("ContentView onAppear: auto-connect path")
+                        self.lifecycle = autoLc
+                        autoLc.start()
+                        diag("autoLc.start() returned")
+                    }
+            } else {
+                OnboardingView { lc in
+                    diag("ContentView onConnect callback received lifecycle")
+                    self.lifecycle = lc
+                    lc.start()
+                    diag("lc.start() returned")
                 }
-        } else {
-            OnboardingView { lc in
-                diag("ContentView onConnect callback received lifecycle")
-                self.lifecycle = lc
-                lc.start()
-                diag("lc.start() returned")
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            // iOS が app を一定時間 background に置くと WebRTC / WS が
+            // suspend されるので、foreground 復帰で signaling を貼り直す.
+            guard let lifecycle else { return }
+            switch phase {
+            case .active:
+                diag("scenePhase=.active → resumeIfNeeded")
+                lifecycle.resumeIfNeeded()
+            case .background, .inactive:
+                break
+            @unknown default:
+                break
             }
         }
     }

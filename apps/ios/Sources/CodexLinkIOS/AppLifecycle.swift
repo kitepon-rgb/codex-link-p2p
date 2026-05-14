@@ -149,6 +149,28 @@ public final class AppLifecycle: ObservableObject {
         phase = .idle
     }
 
+    /// background → foreground 復帰時に呼ぶ. signaling WS が closed / dead で
+    /// あれば再接続を仕掛ける. ContentView の .onChange(of: scenePhase) から
+    /// 呼ぶ想定.
+    public func resumeIfNeeded() {
+        let needsResume: Bool
+        switch phase {
+        case .idle, .error:
+            needsResume = true
+        case .signalingConnecting, .signalingOpen, .awaitingTurnCredential,
+             .peerOffering, .peerConnecting, .peerOpen:
+            // signaling client が closed なら再接続必要.
+            needsResume = signaling.currentState == .closed || signaling.currentState == .idle
+        }
+        guard needsResume else { return }
+        fwDiag("resumeIfNeeded: triggering reconnect (phase=\(phase))")
+        // PeerConnection は ICE 状態が残っていれば SDK が自動回復する場合があるが、
+        // 念のため明示的に閉じて再 offer させる.
+        peer.close()
+        phase = .signalingConnecting
+        signaling.start()
+    }
+
     public func submitTurn(projectId: ProjectId, threadId: ThreadId?, input: String) {
         peer.send(.uiAction(.submitTurn(projectId: projectId, threadId: threadId, input: input)))
     }
