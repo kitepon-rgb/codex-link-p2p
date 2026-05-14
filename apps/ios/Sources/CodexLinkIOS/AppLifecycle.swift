@@ -74,6 +74,9 @@ public final class AppLifecycle: ObservableObject {
     private var liveActivityDebounceTask: Task<Void, Never>?
     /// 最後に sync を投げた時刻 (Live Activity update の rate limit 用).
     private var lastLiveActivitySyncAt: Date = Date.distantPast
+    /// peer state が .failed に入った時刻. .failed が 10s 続いたら自動再接続.
+    fileprivate var failedSince: Date?
+    fileprivate var failedAutoReconnectTask: Task<Void, Never>?
 
     public init(
         relayUrl: URL,
@@ -163,12 +166,21 @@ public final class AppLifecycle: ObservableObject {
             needsResume = signaling.currentState == .closed || signaling.currentState == .idle
         }
         guard needsResume else { return }
-        fwDiag("resumeIfNeeded: triggering reconnect (phase=\(phase))")
-        // PeerConnection は ICE 状態が残っていれば SDK が自動回復する場合があるが、
-        // 念のため明示的に閉じて再 offer させる.
+        reconnect(reason: "resumeIfNeeded(phase=\(phase))")
+    }
+
+    /// 強制的に signaling + peer を貼り直す. Settings の Reconnect ボタンや
+    /// 自動再接続タイマから呼ぶ.
+    public func reconnect(reason: String) {
+        fwDiag("reconnect: \(reason)")
         peer.close()
-        phase = .signalingConnecting
-        signaling.start()
+        signaling.stop()
+        // 少し遅延を入れて WS 完全 close 後に start (race condition 回避).
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            self.phase = .signalingConnecting
+            self.signaling.start()
+        }
     }
 
     public func submitTurn(projectId: ProjectId, threadId: ThreadId?, input: String) {
@@ -272,11 +284,26 @@ extension AppLifecycle: PeerConnectionDelegate {
             case .connected, .completed:
                 fwDiag("setting phase=.peerOpen (from peer state)")
                 self.phase = .peerOpen
+                self.failedSince = nil
             case .failed:
                 self.phase = .error(message: "peer ICE failed")
+                self.failedSince = Date()
+                self.scheduleFailedAutoReconnect()
             default:
-                break
+                self.failedSince = nil
             }
+        }
+    }
+
+    /// peer state が .failed のまま 10s 続いたら自動再接続する. ユーザが
+    /// Settings の Reconnect ボタンを押す前に勝手に直す.
+    private func scheduleFailedAutoReconnect() {
+        failedAutoReconnectTask?.cancel()
+        failedAutoReconnectTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000) // 10s
+            guard let self = self, !Task.isCancelled else { return }
+            guard self.failedSince != nil else { return }
+            self.reconnect(reason: "peer .failed 10s 経過の自動再接続")
         }
     }
 

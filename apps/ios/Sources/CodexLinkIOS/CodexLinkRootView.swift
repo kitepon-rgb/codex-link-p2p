@@ -375,6 +375,12 @@ private struct SettingsSheet: View {
                     if let err = state.latestError {
                         labeledRow("Last error", err)
                     }
+                    Button {
+                        lifecycle.reconnect(reason: "user tapped Settings → Reconnect")
+                        onClose()
+                    } label: {
+                        Label("Reconnect", systemImage: "arrow.clockwise")
+                    }
                 }
                 Section("Diagnostics") {
                     if state.diagnostics.isEmpty {
