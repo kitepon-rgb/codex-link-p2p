@@ -349,6 +349,8 @@ private struct ThreadsSheet: View {
 private struct SettingsSheet: View {
     @ObservedObject var lifecycle: AppLifecycle
     let onClose: () -> Void
+    @State private var shareItems: [URL] = []
+    @State private var showShare: Bool = false
 
     var body: some View {
         let state = lifecycle.projection.state
@@ -393,6 +395,14 @@ private struct SettingsSheet: View {
                             }
                         }
                     }
+                    Button {
+                        if let url = exportDebugLog() {
+                            shareItems = [url]
+                            showShare = true
+                        }
+                    } label: {
+                        Label("Share debug log", systemImage: "square.and.arrow.up")
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -401,6 +411,27 @@ private struct SettingsSheet: View {
                     Button("Close") { onClose() }
                 }
             }
+            .modifier(ShareLogModifier(isPresented: $showShare, items: shareItems))
+        }
+    }
+
+    /// `Documents/codex-link-debug.log` のスナップショットを `tmp/` に複製し、
+    /// 共有用 URL を返す. 直接 Documents/ を共有すると iOS の sandbox で挙動が
+    /// 不安定なので、必ず tmp に複製してから ShareSheet に渡す.
+    private func exportDebugLog() -> URL? {
+        let fm = FileManager.default
+        guard let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let src = docs.appendingPathComponent("codex-link-debug.log")
+        guard fm.fileExists(atPath: src.path) else { return nil }
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let dst = fm.temporaryDirectory.appendingPathComponent("codex-link-debug-\(stamp).log")
+        try? fm.removeItem(at: dst)
+        do {
+            try fm.copyItem(at: src, to: dst)
+            return dst
+        } catch {
+            return nil
         }
     }
 
@@ -436,3 +467,35 @@ private struct SettingsSheet: View {
         }
     }
 }
+
+// UIActivityViewController を SwiftUI でラップ. iOS だけで動く. macOS では
+// no-op として動作させるため、modifier 経由で iOS/macOS の差分を吸収する.
+#if canImport(UIKit) && !os(watchOS)
+import UIKit
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct ShareLogModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let items: [URL]
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            ShareSheet(items: items)
+        }
+    }
+}
+#else
+private struct ShareLogModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let items: [URL]
+    func body(content: Content) -> some View {
+        content   // macOS では no-op (SwiftPM 単体テスト用)
+    }
+}
+#endif
