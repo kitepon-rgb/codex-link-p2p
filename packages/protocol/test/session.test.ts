@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { asHostId, asDeviceId, asUserId } from "../src/rendezvous.js";
 import {
+  asItemId,
+  asProjectId,
   asRequestId,
   asSequenceNumber,
   asThreadId,
+  asTurnId,
   type ApprovalDecision,
   type ApprovalRequest,
   type AssistantDeltaEvent,
@@ -19,7 +22,10 @@ import {
 } from "../src/session.js";
 
 const hostId = asHostId("host-1");
+const projectId = asProjectId("proj-1");
 const threadId = asThreadId("thread-1");
+const turnId = asTurnId("turn-1");
+const itemId = asItemId("item-1");
 const requestId = asRequestId("req-1");
 
 const sampleCapabilities: HostCapabilities = {
@@ -36,12 +42,13 @@ describe("CodexLinkEvent discriminated union", () => {
       sequence: asSequenceNumber(1),
       timestamp: 1_700_000_000_000,
       threadId,
-      delta: "hello ",
+      turnId,
+      text: "hello ",
     };
 
     const decoded = JSON.parse(JSON.stringify(ev)) as AssistantDeltaEvent;
     expect(decoded.type).toBe("assistant.delta");
-    expect(decoded.delta).toBe("hello ");
+    expect(decoded.text).toBe("hello ");
     expect(decoded.threadId).toBe(threadId);
   });
 
@@ -50,43 +57,50 @@ describe("CodexLinkEvent discriminated union", () => {
       type: "thread.started",
       sequence: asSequenceNumber(2),
       timestamp: 1_700_000_000_001,
-      threadId,
-      projectId: "proj-1",
-      title: "First thread",
+      thread: {
+        id: threadId,
+        projectId,
+        title: "First thread",
+        updatedAt: null,
+      },
     };
     const decoded = JSON.parse(JSON.stringify(ev)) as ThreadStartedEvent;
-    expect(decoded.title).toBe("First thread");
+    expect(decoded.thread.title).toBe("First thread");
   });
 
   it("a switch over CodexLinkEvent.type is exhaustive (no implicit any in never branch)", () => {
     const classify = (e: CodexLinkEvent): string => {
       switch (e.type) {
+        case "host.account.updated":
+          return e.account?.email ?? "no-account";
         case "host.capabilities.updated":
           return e.capabilities.codexVersion;
         case "project.list.updated":
           return `${e.projects.length} projects`;
         case "thread.started":
-          return e.title;
+          return e.thread.title ?? "untitled";
         case "turn.status.changed":
           return e.status;
         case "assistant.delta":
-          return e.delta;
+          return e.text;
         case "assistant.final":
           return e.text;
         case "transcript.item.recorded":
-          return e.item.role;
+          return e.role;
         case "timeline.item.started":
-          return e.kind;
+          return e.label;
         case "timeline.item.completed":
-          return e.outcome;
+          return e.status;
         case "approval.requested":
-          return e.request.summary;
+          return e.request.title;
         case "approval.resolved":
-          return e.decision.approved ? "approved" : "denied";
+          return e.decision ?? "no-decision";
         case "rate_limit.updated":
-          return String(e.remainingTokens);
+          return String(e.usedPercent ?? -1);
+        case "diagnostic.reported":
+          return e.diagnostic.message;
         case "error.reported":
-          return e.code;
+          return e.message;
       }
       // Exhaustiveness check — if a new CodexLinkEvent variant is added,
       // this assignment fails to typecheck.
@@ -99,46 +113,50 @@ describe("CodexLinkEvent discriminated union", () => {
       sequence: asSequenceNumber(1),
       timestamp: 0,
       threadId,
-      delta: "hi",
+      turnId,
+      text: "hi",
     };
     expect(classify(ev)).toBe("hi");
   });
 });
 
-describe("ApprovalRequest / ApprovalDecision", () => {
-  it("round-trips a command approval request and decision", () => {
+describe("ApprovalRequest / ApprovalDecision (4-way)", () => {
+  it("round-trips a command_execution approval request and decision", () => {
     const req: ApprovalRequest = {
-      requestId,
+      id: requestId,
+      kind: "command_execution",
       threadId,
-      summary: "rm -rf /tmp/junk",
-      kind: "command",
+      turnId,
+      title: "rm -rf /tmp/junk",
       detail: "Will delete /tmp/junk recursively.",
+      availableDecisions: ["accept", "accept_for_session", "decline", "cancel"],
     };
     const decision: ApprovalDecision = {
       requestId,
-      approved: false,
-      reason: "Looks unsafe",
+      decision: "decline",
     };
 
     const dr = JSON.parse(JSON.stringify(req)) as ApprovalRequest;
     const dd = JSON.parse(JSON.stringify(decision)) as ApprovalDecision;
-    expect(dr.kind).toBe("command");
-    expect(dd.approved).toBe(false);
-    expect(dd.reason).toBe("Looks unsafe");
+    expect(dr.kind).toBe("command_execution");
+    expect(dr.availableDecisions).toContain("accept_for_session");
+    expect(dd.decision).toBe("decline");
   });
 });
 
 describe("CodexLinkUIAction", () => {
-  it("submit_turn frame carries the input text", () => {
+  it("submit_turn frame carries projectId + input", () => {
     const action: CodexLinkUIAction = {
       type: "ui.submit_turn",
-      threadId,
+      projectId,
+      threadId: null,
       input: "Refactor session.ts",
     };
     const decoded = JSON.parse(JSON.stringify(action)) as CodexLinkUIAction;
     expect(decoded.type).toBe("ui.submit_turn");
     if (decoded.type === "ui.submit_turn") {
       expect(decoded.input).toBe("Refactor session.ts");
+      expect(decoded.projectId).toBe(projectId);
     }
   });
 });
@@ -154,16 +172,20 @@ describe("Snapshot (replay-on-peer)", () => {
 
     const projection: CodexLinkProjection = {
       hostId,
+      account: null,
       capabilities: sampleCapabilities,
-      projects: [{ id: "p", displayName: "Codex", path: "/tmp/codex" }],
+      projects: [
+        { id: projectId, hostId, name: "Codex", pathLabel: "/tmp/codex" },
+      ],
       threads: [
         {
-          threadId,
-          title: "thread A",
+          thread: { id: threadId, projectId, title: "thread A", updatedAt: null },
           status: "idle",
-          transcript: [{ id: "i1", role: "user", content: "hi" }],
+          currentTurnId: null,
+          transcript: [{ id: itemId, role: "user", text: "hi" }],
           timeline: [],
           pendingApproval: null,
+          streamingAssistant: "",
         },
       ],
       latestSequence: asSequenceNumber(42),
@@ -177,7 +199,7 @@ describe("Snapshot (replay-on-peer)", () => {
 
     expect(dq.lastSequence).toBeNull();
     expect(dr.projection.threads).toHaveLength(1);
-    expect(dr.projection.threads[0]?.transcript[0]?.content).toBe("hi");
+    expect(dr.projection.threads[0]?.transcript[0]?.text).toBe("hi");
   });
 });
 
@@ -191,12 +213,13 @@ describe("CodexLinkSessionFrame (DataChannel wire)", () => {
           sequence: asSequenceNumber(1),
           timestamp: 0,
           threadId,
-          delta: "x",
+          turnId,
+          text: "x",
         },
       },
       {
         kind: "ui_action",
-        action: { type: "ui.cancel_turn", threadId },
+        action: { type: "ui.cancel_turn", threadId, turnId },
       },
       {
         kind: "snapshot_request",

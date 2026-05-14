@@ -1,58 +1,72 @@
 // SessionManager — Codex app-server と PeerManager を繋ぐ中央.
 //
 // 役割:
-// - Codex 側 event を `CodexLinkEvent` に正規化し、connected peers へ
-//   `CodexLinkSessionFrame` として broadcast する.
-// - peer (iPhone) から届く `CodexLinkUIAction` を Codex app-server に
-//   commands として送る.
+// - Codex の JSON-RPC notification を `CodexLinkEvent` に正規化し、
+//   connected peers へ `SessionFrameEvent` として broadcast する.
+// - Codex の server request (approval 等) を peer に届ける. peer の
+//   `ui.respond_approval` を受けたら Codex に response を返す.
+// - peer (iPhone) から届く `CodexLinkUIAction` を Codex JSON-RPC に dispatch.
 // - peer の `SessionSnapshotRequest` に対し、現状の `CodexLinkProjection` を
-//   `snapshot_response` フレームで返す (replay-on-peer).
+//   `snapshot_response` で返す (replay-on-peer).
 //
 // **broker 経路を一切持たない**: event は DataChannel 上でしか流れず、Relay
-// にも保存されない (Host の本 SessionManager 内 state がローカル唯一の正本).
+// にも保存されない. ここに溜まる state がローカル唯一の正本.
 
 import {
+  asProjectId,
+  asRequestId,
   asSequenceNumber,
-  type ApprovalRequest,
+  asThreadId,
+  asTurnId,
+  type ApprovalDecisionKind,
   type CodexLinkEvent,
   type CodexLinkProjection,
   type CodexLinkSessionFrame,
   type CodexLinkUIAction,
   type HostCapabilities,
-  type ProjectDescriptor,
+  type HostChatGptAccount,
+  type ItemId,
+  type ProjectId,
+  type ProjectRef,
+  type RequestId,
   type SequenceNumber,
   type SessionSnapshotResponse,
-  type ThreadId,
   type ThreadProjection,
+  type ThreadRef,
   type TimelineEntry,
   type TimelineItemCompletedEvent,
   type TimelineItemStartedEvent,
   type TranscriptItem,
+  type TurnId,
+  type ThreadId,
   type TurnStatus,
 } from "@codex-link/protocol/session";
 import type { HostId, UserId, DeviceId } from "@codex-link/protocol/rendezvous";
-
 import type {
-  CodexAppServerEvent,
-  CodexClient,
-  CodexAppServerCommand,
-} from "./codex.js";
-import { normalizeCodexEvent } from "./codex-events.js";
+  CodexAppServerClient,
+  JsonRpcId,
+  JsonRpcNotification,
+  JsonRpcServerRequest,
+} from "@codex-link/codex-client";
+
+import {
+  codexNotificationToEvents,
+  codexServerRequestToEvent,
+} from "./codex-events.js";
 
 // ===== Internal mutable thread state =====
 
 interface ThreadState {
-  threadId: ThreadId;
-  title: string;
+  thread: ThreadRef;
   status: TurnStatus;
+  currentTurnId: TurnId | null;
   transcript: TranscriptItem[];
   timeline: TimelineEntry[];
-  pendingApproval: ApprovalRequest | null;
+  pendingApproval: import("@codex-link/protocol/session").ApprovalRequest | null;
+  streamingAssistant: string;
 }
 
-// ===== Peer sink (subset of PeerManager that SessionManager touches) =====
-//
-// テストでは fake を渡す. 本番では `PeerManager` を直接渡せる.
+// ===== Peer sink =====
 
 export interface PeerSink {
   sendFrame(
@@ -67,60 +81,25 @@ export interface PeerSink {
 export interface SessionManagerOptions {
   readonly hostId: HostId;
   readonly hostCapabilities: HostCapabilities;
-  readonly codex: CodexClient;
+  readonly codex: CodexAppServerClient;
   readonly peers: PeerSink;
   readonly now?: () => number;
-  // UI action → Codex command 変換 hook. UI action 名 / 値が Codex に
-  // そのまま流れない場合に上書きする. 既定: そのまま data に詰めて type だけ
-  // 規約名にする.
-  readonly mapUIAction?: (
-    action: CodexLinkUIAction,
-  ) => CodexAppServerCommand | null;
+  readonly defaultProjectId: ProjectId;
 }
 
-const defaultMapUIAction = (
-  action: CodexLinkUIAction,
-): CodexAppServerCommand | null => {
-  switch (action.type) {
-    case "ui.submit_turn":
-      return {
-        type: "user_turn",
-        threadId: action.threadId as string,
-        data: { input: action.input },
-      };
-    case "ui.respond_approval":
-      return {
-        type: "approval_response",
-        data: {
-          requestId: action.decision.requestId as string,
-          approved: action.decision.approved,
-          ...(action.decision.reason !== undefined
-            ? { reason: action.decision.reason }
-            : {}),
-        },
-      };
-    case "ui.cancel_turn":
-      return {
-        type: "cancel_turn",
-        threadId: action.threadId as string,
-      };
-    case "ui.select_project":
-      return {
-        type: "select_project",
-        data: { projectId: action.projectId },
-      };
-  }
-};
-
 export class SessionManager {
-  private readonly options: Required<
-    Omit<SessionManagerOptions, "mapUIAction">
-  > & { mapUIAction: (a: CodexLinkUIAction) => CodexAppServerCommand | null };
+  private readonly options: Required<Omit<SessionManagerOptions, "defaultProjectId">> & {
+    readonly defaultProjectId: ProjectId;
+  };
   private readonly threads = new Map<ThreadId, ThreadState>();
-  private projects: ProjectDescriptor[] = [];
+  private projects: ProjectRef[] = [];
   private capabilities: HostCapabilities;
+  private account: HostChatGptAccount | null = null;
   private sequenceCounter = 0;
-  private unsubscribeCodex: (() => void) | null = null;
+  /// approval.requested の RequestId と、Codex から来た server request の id の対応.
+  /// iPhone が ui.respond_approval を返した時、対応する server request id に対して
+  /// codex.respondToServerRequest を呼ぶ.
+  private readonly pendingApprovals = new Map<RequestId, JsonRpcId>();
 
   constructor(options: SessionManagerOptions) {
     this.options = {
@@ -129,30 +108,38 @@ export class SessionManager {
       codex: options.codex,
       peers: options.peers,
       now: options.now ?? (() => Date.now()),
-      mapUIAction: options.mapUIAction ?? defaultMapUIAction,
+      defaultProjectId: options.defaultProjectId,
     };
     this.capabilities = options.hostCapabilities;
   }
 
-  // ===== Lifecycle =====
+  // ===== Codex side =====
 
-  start(): void {
-    if (this.unsubscribeCodex !== null) return;
-    this.unsubscribeCodex = this.options.codex.onEvent((e) =>
-      this.handleCodexEvent(e),
-    );
-  }
-
-  stop(): void {
-    if (this.unsubscribeCodex !== null) {
-      this.unsubscribeCodex();
-      this.unsubscribeCodex = null;
+  handleCodexNotification(message: JsonRpcNotification): void {
+    const events = codexNotificationToEvents(message, this.options.defaultProjectId);
+    for (const ev of events) {
+      this.processOutboundEvent(ev);
     }
   }
 
-  // ===== Inbound: peer → Host =====
+  handleCodexServerRequest(message: JsonRpcServerRequest): void {
+    const event = codexServerRequestToEvent(message, {
+      activeTurnIdForThread: (threadId) => {
+        const t = this.threads.get(threadId as ThreadId);
+        return t?.currentTurnId === null ? undefined : (t?.currentTurnId as string | undefined);
+      },
+    });
+    if (event === null) {
+      return;
+    }
+    if (event.type === "approval.requested") {
+      this.pendingApprovals.set(event.request.id, message.id);
+    }
+    this.processOutboundEvent(event);
+  }
 
-  // PeerManager から来る DataChannel frame を処理する.
+  // ===== Peer side =====
+
   handlePeerFrame(
     peer: { userId: UserId; deviceId: DeviceId },
     frame: CodexLinkSessionFrame,
@@ -165,53 +152,93 @@ export class SessionManager {
         this.sendSnapshotTo(peer);
         return;
       case "ack":
-        // optional: 何もしない (将来 retransmit logic で使う).
+        // 将来 retransmit logic で使う. 今は no-op.
         return;
       case "event":
       case "snapshot_response":
-        // 通常は client → host でこの方向は来ない. 来ても無視する.
+        // 通常 client → host でこの方向は来ない. 来ても無視.
         return;
     }
   }
 
   private async dispatchUIAction(action: CodexLinkUIAction): Promise<void> {
-    const cmd = this.options.mapUIAction(action);
-    if (cmd === null) return;
-    if (!this.options.codex.isRunning()) return;
     try {
-      await this.options.codex.sendCommand(cmd);
-    } catch {
-      // Codex transport エラーは error.reported として broadcast する.
-      this.broadcastEvent({
+      switch (action.type) {
+        case "ui.submit_turn":
+          if (action.threadId !== null) {
+            await this.options.codex.startTurn({
+              threadId: action.threadId as string,
+              prompt: action.input,
+            });
+          } else {
+            await this.options.codex.startThread({
+              projectId: action.projectId as string,
+              prompt: action.input,
+            });
+          }
+          return;
+        case "ui.respond_approval": {
+          const serverRequestId = this.pendingApprovals.get(action.decision.requestId);
+          if (serverRequestId !== undefined) {
+            this.options.codex.respondToServerRequest(serverRequestId, {
+              decision: decisionToCodex(action.decision.decision),
+            });
+            this.pendingApprovals.delete(action.decision.requestId);
+          }
+          // Also broadcast approval.resolved so projection is updated.
+          this.processOutboundEvent({
+            type: "approval.resolved",
+            requestId: action.decision.requestId,
+            decision: action.decision.decision,
+          });
+          return;
+        }
+        case "ui.cancel_turn":
+          await this.options.codex.interruptTurn({
+            threadId: action.threadId as string,
+            turnId: action.turnId as string,
+          });
+          return;
+        case "ui.select_project":
+          // Project 切替は state を変えるだけ. UI 側で thread list 表示更新.
+          // 現状は no-op (将来 multi-project 対応で listThreads する).
+          return;
+        case "ui.resume_thread":
+          await this.options.codex.resumeThread({
+            threadId: action.threadId as string,
+          });
+          return;
+      }
+    } catch (e) {
+      this.processOutboundEvent({
         type: "error.reported",
-        sequence: this.nextSeq(),
-        timestamp: this.options.now(),
-        code: "codex_send_failed",
-        message: "failed to send command to Codex app-server",
+        scope: "codex",
+        message: `dispatchUIAction failed: ${(e as Error).message}`,
       });
     }
   }
 
-  // ===== Outbound: Codex → peers =====
+  // ===== Outbound: stamp + apply local + broadcast =====
 
-  private handleCodexEvent(raw: CodexAppServerEvent): void {
-    const ev = normalizeCodexEvent(raw, {
-      sequence: this.nextSeq(),
-      timestamp: this.options.now(),
+  private processOutboundEvent(event: CodexLinkEvent): void {
+    this.applyLocalProjection(event);
+    const sequence = this.nextSeq();
+    const timestamp = this.options.now();
+    this.options.peers.broadcastFrame({
+      kind: "event",
+      sequence,
+      timestamp,
+      event,
     });
-    if (ev === null) return;
-    this.applyLocalProjection(ev);
-    this.broadcastEvent(ev);
-  }
-
-  private broadcastEvent(ev: CodexLinkEvent): void {
-    this.options.peers.broadcastFrame({ kind: "event", event: ev });
   }
 
   // ===== Projection state =====
 
   private applyLocalProjection(ev: CodexLinkEvent): void {
     switch (ev.type) {
+      case "host.account.updated":
+        this.account = ev.account;
+        return;
       case "host.capabilities.updated":
         this.capabilities = ev.capabilities;
         return;
@@ -219,36 +246,32 @@ export class SessionManager {
         this.projects = [...ev.projects];
         return;
       case "thread.started":
-        this.threads.set(ev.threadId, {
-          threadId: ev.threadId,
-          title: ev.title,
-          status: "idle",
-          transcript: [],
-          timeline: [],
-          pendingApproval: null,
-        });
+        this.ensureThread(ev.thread);
         return;
       case "turn.status.changed": {
-        const t = this.ensureThread(ev.threadId);
+        const t = this.ensureThreadById(ev.threadId);
         t.status = ev.status;
+        t.currentTurnId = ev.status === "running" ? ev.turnId : null;
+        if (ev.status === "completed" || ev.status === "failed" || ev.status === "canceled") {
+          // Streaming buffer flush: clear streamingAssistant on turn end.
+          t.streamingAssistant = "";
+        }
         return;
       }
-      case "assistant.delta":
-        // 中間状態は projection には積まない (final で正規化される). 必要なら
-        // 後続でストリーミング textbuf を持つ.
+      case "assistant.delta": {
+        const t = this.ensureThreadById(ev.threadId);
+        t.streamingAssistant += ev.text;
         return;
+      }
       case "assistant.final": {
-        const t = this.ensureThread(ev.threadId);
-        t.transcript.push({
-          id: `a_${ev.sequence as number}`,
-          role: "assistant",
-          content: ev.text,
-        });
+        const t = this.ensureThreadById(ev.threadId);
+        t.streamingAssistant = "";
+        t.transcript.push({ id: ev.itemId, role: "assistant", text: ev.text });
         return;
       }
       case "transcript.item.recorded": {
-        const t = this.ensureThread(ev.threadId);
-        t.transcript.push(ev.item);
+        const t = this.ensureThreadById(ev.threadId);
+        t.transcript.push({ id: ev.itemId, role: ev.role, text: ev.text });
         return;
       }
       case "timeline.item.started":
@@ -258,74 +281,97 @@ export class SessionManager {
         this.completeTimeline(ev);
         return;
       case "approval.requested": {
-        const t = this.ensureThread(ev.request.threadId);
+        const t = this.ensureThreadById(ev.request.threadId);
         t.pendingApproval = ev.request;
         return;
       }
       case "approval.resolved": {
-        const t = this.ensureThread(ev.threadId);
-        t.pendingApproval = null;
+        for (const t of this.threads.values()) {
+          if (t.pendingApproval?.id === ev.requestId) {
+            t.pendingApproval = null;
+          }
+        }
         return;
       }
       case "rate_limit.updated":
+      case "diagnostic.reported":
       case "error.reported":
         return;
     }
   }
 
   private addTimelineStart(ev: TimelineItemStartedEvent): void {
-    const t = this.ensureThread(ev.threadId);
+    const t = this.ensureThreadById(ev.threadId);
     t.timeline.push({
       itemId: ev.itemId,
-      kind: ev.kind,
+      turnId: ev.turnId,
       label: ev.label,
-      outcome: null,
+      detail: ev.detail ?? null,
+      status: "running",
     });
   }
 
   private completeTimeline(ev: TimelineItemCompletedEvent): void {
-    const t = this.ensureThread(ev.threadId);
+    const t = this.ensureThreadById(ev.threadId);
     const idx = t.timeline.findIndex((x) => x.itemId === ev.itemId);
     if (idx < 0) return;
     const existing = t.timeline[idx];
     if (existing === undefined) return;
     t.timeline[idx] = {
       itemId: existing.itemId,
-      kind: existing.kind,
+      turnId: existing.turnId,
       label: existing.label,
-      outcome: ev.outcome,
+      detail: existing.detail,
+      status: ev.status,
     };
   }
 
-  private ensureThread(threadId: ThreadId): ThreadState {
-    let t = this.threads.get(threadId);
-    if (t === undefined) {
-      t = {
-        threadId,
-        title: "Untitled",
-        status: "idle",
-        transcript: [],
-        timeline: [],
-        pendingApproval: null,
-      };
-      this.threads.set(threadId, t);
+  private ensureThread(thread: ThreadRef): ThreadState {
+    const existing = this.threads.get(thread.id);
+    if (existing !== undefined) {
+      // Preserve transcript; just update ref.
+      existing.thread = thread;
+      return existing;
     }
+    const t: ThreadState = {
+      thread,
+      status: "idle",
+      currentTurnId: null,
+      transcript: [],
+      timeline: [],
+      pendingApproval: null,
+      streamingAssistant: "",
+    };
+    this.threads.set(thread.id, t);
     return t;
+  }
+
+  private ensureThreadById(threadId: ThreadId): ThreadState {
+    const existing = this.threads.get(threadId);
+    if (existing !== undefined) return existing;
+    return this.ensureThread({
+      id: threadId,
+      projectId: this.options.defaultProjectId,
+      title: null,
+      updatedAt: null,
+    });
   }
 
   // ===== Snapshot =====
 
   buildProjection(): CodexLinkProjection {
     const threads: ThreadProjection[] = [...this.threads.values()].map((t) => ({
-      threadId: t.threadId,
-      title: t.title,
+      thread: t.thread,
       status: t.status,
+      currentTurnId: t.currentTurnId,
       transcript: [...t.transcript],
       timeline: [...t.timeline],
       pendingApproval: t.pendingApproval,
+      streamingAssistant: t.streamingAssistant,
     }));
     return {
       hostId: this.options.hostId,
+      account: this.account,
       capabilities: this.capabilities,
       projects: [...this.projects],
       threads,
@@ -334,17 +380,9 @@ export class SessionManager {
     };
   }
 
-  private sendSnapshotTo(peer: {
-    userId: UserId;
-    deviceId: DeviceId;
-  }): void {
-    const response: SessionSnapshotResponse = {
-      projection: this.buildProjection(),
-    };
-    this.options.peers.sendFrame(peer, {
-      kind: "snapshot_response",
-      response,
-    });
+  private sendSnapshotTo(peer: { userId: UserId; deviceId: DeviceId }): void {
+    const response: SessionSnapshotResponse = { projection: this.buildProjection() };
+    this.options.peers.sendFrame(peer, { kind: "snapshot_response", response });
   }
 
   private nextSeq(): SequenceNumber {
@@ -362,3 +400,30 @@ export class SessionManager {
     return this.sequenceCounter;
   }
 }
+
+// Helper exposed for tests that want to construct refs.
+export const helpers = {
+  asProjectId,
+  asThreadId,
+  asTurnId,
+  asRequestId,
+} as const;
+
+// ===== ApprovalDecisionKind ↔ Codex 文字列 =====
+
+function decisionToCodex(decision: ApprovalDecisionKind): string {
+  switch (decision) {
+    case "accept":
+      return "approved";
+    case "accept_for_session":
+      return "approved_for_session";
+    case "decline":
+      return "denied";
+    case "cancel":
+      return "abort";
+  }
+}
+
+// referenced by linter type-check to keep ItemId import in use
+const _itemIdMarker = null as unknown as ItemId;
+void _itemIdMarker;

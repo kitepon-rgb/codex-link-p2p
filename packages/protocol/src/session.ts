@@ -1,12 +1,10 @@
 // Session protocol — DataChannel 上だけで流れる型。
 //
 // このファイルに置くもの:
-// - CodexLinkEvent (host.online は rendezvous 側、それ以外の DataChannel 上 event)
+// - 親リポ (codex-link broker 版) と同等の CodexLinkEvent / Approval / Turn / Projection 型
 // - CodexLinkSessionFrame (event / ui_action / snapshot_request / snapshot_response / ack の sum)
 // - CodexLinkUIAction (iPhone → Host)
-// - ApprovalRequest / ApprovalDecision
-// - SessionSnapshotRequest / SessionSnapshotResponse (replay-on-peer)
-// - CodexLinkProjection (Host が iPhone へ返す現状 snapshot)
+// - LiveActivityState (Live Activity の content state)
 //
 // この module は services/relay からの import を ESLint で禁止している
 // (eslint.config.js の no-restricted-imports)。Relay は payload を観測しない
@@ -16,16 +14,27 @@ import type { DeviceId, HostId, HostPlatform, UserId } from "./rendezvous.js";
 
 // ===== Branded IDs (session only) =====
 
+export type ProjectId = string & { readonly __brand: "ProjectId" };
 export type ThreadId = string & { readonly __brand: "ThreadId" };
+export type TurnId = string & { readonly __brand: "TurnId" };
+export type ItemId = string & { readonly __brand: "ItemId" };
 export type RequestId = string & { readonly __brand: "RequestId" };
 export type SequenceNumber = number & { readonly __brand: "SequenceNumber" };
 
+export const asProjectId = (value: string): ProjectId => value as ProjectId;
 export const asThreadId = (value: string): ThreadId => value as ThreadId;
+export const asTurnId = (value: string): TurnId => value as TurnId;
+export const asItemId = (value: string): ItemId => value as ItemId;
 export const asRequestId = (value: string): RequestId => value as RequestId;
 export const asSequenceNumber = (value: number): SequenceNumber =>
   value as SequenceNumber;
 
-// ===== Host capabilities / project descriptor =====
+// ===== Host meta (Codex account / capabilities) =====
+
+export interface HostChatGptAccount {
+  readonly email: string;
+  readonly planType: string | null;
+}
 
 export interface HostCapabilities {
   readonly hostId: HostId;
@@ -34,146 +43,203 @@ export interface HostCapabilities {
   readonly supportsApprovals: boolean;
 }
 
-export interface ProjectDescriptor {
-  readonly id: string;
-  readonly displayName: string;
-  readonly path: string;
+// ===== Project / Thread / Turn refs =====
+
+export interface ProjectRef {
+  readonly id: ProjectId;
+  readonly hostId: HostId;
+  readonly name: string;
+  readonly pathLabel: string;
 }
 
-// ===== Transcript / Timeline projection pieces =====
-
-export interface TranscriptItem {
-  readonly id: string;
-  readonly role: "user" | "assistant" | "system";
-  readonly content: string;
+export interface ThreadRef {
+  readonly id: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string | null;
+  readonly updatedAt: string | null;
 }
 
-export type TimelineItemKind = "tool_call" | "approval" | "reasoning";
-
-export type TimelineItemOutcome = "success" | "failure" | "cancelled";
-
-export interface TimelineEntry {
-  readonly itemId: string;
-  readonly kind: TimelineItemKind;
-  readonly label: string;
-  readonly outcome: TimelineItemOutcome | null;
+export interface TurnRef {
+  readonly id: TurnId;
+  readonly threadId: ThreadId;
 }
 
-// ===== Approval =====
+// ===== Turn status =====
+//
+// 親リポと完全一致。Codex の `turn/started` → "running"、`turn/completed` → "completed"。
 
-export type ApprovalKind = "command" | "patch" | "file_write" | "network";
+export type TurnStatus =
+  | "idle"
+  | "running"
+  | "waiting_for_approval"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+// ===== Approval (4-way decision、親リポと完全一致) =====
+
+export type ApprovalKind =
+  | "command_execution"
+  | "file_change"
+  | "network"
+  | "user_input";
+
+export type ApprovalDecisionKind =
+  | "accept"
+  | "accept_for_session"
+  | "decline"
+  | "cancel";
 
 export interface ApprovalRequest {
-  readonly requestId: RequestId;
-  readonly threadId: ThreadId;
-  readonly summary: string;
+  readonly id: RequestId;
   readonly kind: ApprovalKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly itemId?: ItemId;
+  readonly title: string;
   readonly detail: string;
+  readonly availableDecisions: readonly ApprovalDecisionKind[];
 }
 
 export interface ApprovalDecision {
   readonly requestId: RequestId;
-  readonly approved: boolean;
-  readonly reason?: string;
+  readonly decision: ApprovalDecisionKind;
+}
+
+// ===== Transcript / Timeline pieces =====
+
+export interface TranscriptItem {
+  readonly id: ItemId;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+export type TimelineItemStatus = "running" | "completed" | "failed" | "declined";
+
+export interface TimelineEntry {
+  readonly itemId: ItemId;
+  readonly turnId: TurnId;
+  readonly label: string;
+  readonly detail: string | null;
+  readonly status: TimelineItemStatus;
+}
+
+// ===== Diagnostic =====
+
+export type DiagnosticSeverity = "info" | "warning" | "error";
+
+export interface DiagnosticEvent {
+  readonly scope: "host" | "relay" | "codex";
+  readonly severity: DiagnosticSeverity;
+  readonly message: string;
 }
 
 // ===== CodexLinkEvent (DataChannel-only discriminated union) =====
 //
-// すべての event に sequence と timestamp を持たせる (順序保証 + ack 用)。
+// event 自体は **sequence/timestamp を持たない** (親リポと同じ設計). 順序情報は
+// SessionFrameEvent 側に乗せて DataChannel に流す.
 
-interface BaseEvent {
-  readonly sequence: SequenceNumber;
-  readonly timestamp: number;
+export interface HostAccountUpdatedEvent {
+  readonly type: "host.account.updated";
+  readonly hostId: HostId;
+  readonly account: HostChatGptAccount | null;
 }
 
-export type TurnStatus =
-  | "idle"
-  | "thinking"
-  | "tool"
-  | "awaiting_approval"
-  | "error";
-
-export interface HostCapabilitiesUpdatedEvent extends BaseEvent {
+export interface HostCapabilitiesUpdatedEvent {
   readonly type: "host.capabilities.updated";
+  readonly hostId: HostId;
   readonly capabilities: HostCapabilities;
 }
 
-export interface ProjectListUpdatedEvent extends BaseEvent {
+export interface ProjectListUpdatedEvent {
   readonly type: "project.list.updated";
-  readonly projects: readonly ProjectDescriptor[];
+  readonly hostId: HostId;
+  readonly projects: readonly ProjectRef[];
 }
 
-export interface ThreadStartedEvent extends BaseEvent {
+export interface ThreadStartedEvent {
   readonly type: "thread.started";
-  readonly threadId: ThreadId;
-  readonly projectId: string;
-  readonly title: string;
+  readonly thread: ThreadRef;
 }
 
-export interface TurnStatusChangedEvent extends BaseEvent {
+export interface TurnStatusChangedEvent {
   readonly type: "turn.status.changed";
   readonly threadId: ThreadId;
+  readonly turnId: TurnId;
   readonly status: TurnStatus;
 }
 
-export interface AssistantDeltaEvent extends BaseEvent {
+export interface AssistantDeltaEvent {
   readonly type: "assistant.delta";
   readonly threadId: ThreadId;
-  readonly delta: string;
-}
-
-export interface AssistantFinalEvent extends BaseEvent {
-  readonly type: "assistant.final";
-  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
   readonly text: string;
 }
 
-export interface TranscriptItemRecordedEvent extends BaseEvent {
+export interface AssistantFinalEvent {
+  readonly type: "assistant.final";
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly itemId: ItemId;
+  readonly text: string;
+}
+
+export interface TranscriptItemRecordedEvent {
   readonly type: "transcript.item.recorded";
   readonly threadId: ThreadId;
-  readonly item: TranscriptItem;
+  readonly turnId: TurnId;
+  readonly itemId: ItemId;
+  readonly role: "user" | "assistant";
+  readonly text: string;
 }
 
-export interface TimelineItemStartedEvent extends BaseEvent {
+export interface TimelineItemStartedEvent {
   readonly type: "timeline.item.started";
   readonly threadId: ThreadId;
-  readonly itemId: string;
-  readonly kind: TimelineItemKind;
+  readonly turnId: TurnId;
+  readonly itemId: ItemId;
   readonly label: string;
+  detail?: string;
 }
 
-export interface TimelineItemCompletedEvent extends BaseEvent {
+export interface TimelineItemCompletedEvent {
   readonly type: "timeline.item.completed";
   readonly threadId: ThreadId;
-  readonly itemId: string;
-  readonly outcome: TimelineItemOutcome;
+  readonly turnId: TurnId;
+  readonly itemId: ItemId;
+  readonly status: "completed" | "failed" | "declined";
 }
 
-export interface ApprovalRequestedEvent extends BaseEvent {
+export interface ApprovalRequestedEvent {
   readonly type: "approval.requested";
   readonly request: ApprovalRequest;
 }
 
-export interface ApprovalResolvedEvent extends BaseEvent {
+export interface ApprovalResolvedEvent {
   readonly type: "approval.resolved";
-  readonly threadId: ThreadId;
-  readonly decision: ApprovalDecision;
+  readonly requestId: RequestId;
+  readonly decision?: ApprovalDecisionKind;
 }
 
-export interface RateLimitUpdatedEvent extends BaseEvent {
+export interface RateLimitUpdatedEvent {
   readonly type: "rate_limit.updated";
-  readonly remainingTokens: number;
-  readonly resetAt: number;
+  readonly userId: UserId;
+  readonly usedPercent: number | null;
 }
 
-export interface ErrorReportedEvent extends BaseEvent {
+export interface DiagnosticReportedEvent {
+  readonly type: "diagnostic.reported";
+  readonly diagnostic: DiagnosticEvent;
+}
+
+export interface ErrorReportedEvent {
   readonly type: "error.reported";
-  readonly threadId?: ThreadId;
-  readonly code: string;
+  readonly scope: "host" | "relay" | "codex";
   readonly message: string;
 }
 
 export type CodexLinkEvent =
+  | HostAccountUpdatedEvent
   | HostCapabilitiesUpdatedEvent
   | ProjectListUpdatedEvent
   | ThreadStartedEvent
@@ -186,13 +252,15 @@ export type CodexLinkEvent =
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | RateLimitUpdatedEvent
+  | DiagnosticReportedEvent
   | ErrorReportedEvent;
 
 // ===== iPhone → Host UI actions =====
 
 export interface UISubmitTurn {
   readonly type: "ui.submit_turn";
-  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId | null;
   readonly input: string;
 }
 
@@ -204,18 +272,25 @@ export interface UIRespondApproval {
 export interface UICancelTurn {
   readonly type: "ui.cancel_turn";
   readonly threadId: ThreadId;
+  readonly turnId: TurnId;
 }
 
 export interface UISelectProject {
   readonly type: "ui.select_project";
-  readonly projectId: string;
+  readonly projectId: ProjectId;
+}
+
+export interface UIResumeThread {
+  readonly type: "ui.resume_thread";
+  readonly threadId: ThreadId;
 }
 
 export type CodexLinkUIAction =
   | UISubmitTurn
   | UIRespondApproval
   | UICancelTurn
-  | UISelectProject;
+  | UISelectProject
+  | UIResumeThread;
 
 // ===== Snapshot (replay-on-peer) =====
 //
@@ -230,18 +305,20 @@ export interface SessionSnapshotRequest {
 }
 
 export interface ThreadProjection {
-  readonly threadId: ThreadId;
-  readonly title: string;
+  readonly thread: ThreadRef;
   readonly status: TurnStatus;
+  readonly currentTurnId: TurnId | null;
   readonly transcript: readonly TranscriptItem[];
   readonly timeline: readonly TimelineEntry[];
   readonly pendingApproval: ApprovalRequest | null;
+  readonly streamingAssistant: string;
 }
 
 export interface CodexLinkProjection {
   readonly hostId: HostId;
+  readonly account: HostChatGptAccount | null;
   readonly capabilities: HostCapabilities;
-  readonly projects: readonly ProjectDescriptor[];
+  readonly projects: readonly ProjectRef[];
   readonly threads: readonly ThreadProjection[];
   readonly latestSequence: SequenceNumber;
   readonly capturedAt: number;
@@ -251,10 +328,24 @@ export interface SessionSnapshotResponse {
   readonly projection: CodexLinkProjection;
 }
 
+// ===== Live Activity content state (iOS 17+) =====
+//
+// iPhone 側だけが使うが、ここに型を置いて TS / Swift wire を揃える.
+
+export interface LiveActivityState {
+  readonly hostName: string;
+  readonly projectName: string;
+  readonly status: TurnStatus;
+  readonly latestText: string | null;
+  readonly approvalRequired: boolean;
+}
+
 // ===== Session frame (DataChannel wire) =====
 
 export interface SessionFrameEvent {
   readonly kind: "event";
+  readonly sequence: SequenceNumber;
+  readonly timestamp: number;
   readonly event: CodexLinkEvent;
 }
 

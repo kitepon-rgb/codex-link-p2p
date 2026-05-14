@@ -43,6 +43,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@codex-link/codex-client": "workspace:*",
     "@codex-link/protocol": "workspace:^",
     "node-datachannel": "^0.27",
     "qrcode-terminal": "^0.12.0",

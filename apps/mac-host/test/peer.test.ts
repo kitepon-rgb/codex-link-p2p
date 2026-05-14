@@ -16,6 +16,7 @@ import {
 import {
   asSequenceNumber,
   asThreadId,
+  asTurnId,
   type AssistantDeltaEvent,
   type CodexLinkSessionFrame,
 } from "@codex-link/protocol/session";
@@ -197,14 +198,18 @@ describe("PeerManager (in-process answerer)", () => {
     // host → client メッセージング.
     const event: AssistantDeltaEvent = {
       type: "assistant.delta",
-      sequence: asSequenceNumber(1),
-      timestamp: Date.now(),
       threadId: asThreadId("th-1"),
-      delta: "hello iPhone",
+      turnId: asTurnId("t-1"),
+      text: "hello iPhone",
     };
     const sent = peerManager.sendFrame(
       { userId, deviceId },
-      { kind: "event", event },
+      {
+        kind: "event",
+        sequence: asSequenceNumber(1),
+        timestamp: Date.now(),
+        event,
+      },
     );
     expect(sent).toBe(true);
 

@@ -27,6 +27,7 @@ import {
   type WsOutbound,
 } from "@codex-link/protocol/rendezvous";
 import {
+  asProjectId,
   asSequenceNumber,
   asThreadId,
   type CodexLinkSessionFrame,
@@ -107,8 +108,10 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
 
     // 2) Mac Host process 内で SignalingClient + PeerManager + SessionManager
     //    を立ち上げる.
-    const codex = new NullCodexClient();
-    await codex.start();
+    const codex = new NullCodexClient({
+      onNotification: (n) => session.handleCodexNotification(n),
+      onServerRequest: (r) => session.handleCodexServerRequest(r),
+    });
 
     const peerManager = new PeerManager(
       { hostId, iceServers: ["stun:stun.l.google.com:19302"] },
@@ -132,8 +135,8 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
       },
       codex,
       peers: peerManager,
+      defaultProjectId: asProjectId("p"),
     });
-    session.start();
 
     let issuedCode: string | null = null;
     const hostSignaling = new SignalingClient({
@@ -275,16 +278,14 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
     // 6) DataChannel が両側で open するまで待つ.
     await waitFor(() => dcOpened, 8_000, "iphone dc open");
 
-    // 7) Mac Host 側で Codex event を 1 件 emit → broadcast.
-    codex.emit({
-      type: "thread_started",
-      threadId: "t1",
-      data: { projectId: "p", title: "Hi" },
+    // 7) Mac Host 側で Codex notification を 1 件 emit → broadcast.
+    codex.emitNotification({
+      method: "thread/started",
+      params: { thread: { id: "t1", name: "Hi" } },
     });
-    codex.emit({
-      type: "assistant_message_delta",
-      threadId: "t1",
-      data: { delta: "hello from codex" },
+    codex.emitNotification({
+      method: "item/agentMessage/delta",
+      params: { threadId: "t1", turnId: "tn1", delta: "hello from codex" },
     });
 
     // 8) iPhone 役 が CodexLinkSessionFrame を受け取る.
@@ -294,7 +295,7 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
           (f) =>
             f.kind === "event" &&
             f.event.type === "assistant.delta" &&
-            f.event.delta === "hello from codex",
+            f.event.text === "hello from codex",
         ),
       4_000,
       "iphone receives assistant.delta",
@@ -306,6 +307,7 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
       kind: "ui_action",
       action: {
         type: "ui.submit_turn",
+        projectId: asProjectId("p"),
         threadId: asThreadId("t1"),
         input: "ping from iphone",
       },
@@ -313,12 +315,12 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
     clientDc.sendMessage(JSON.stringify(submitFrame));
 
     await waitFor(
-      () => codex.commandsSent().some((c) => c.type === "user_turn"),
+      () => codex.sentRequests().some((r) => r.method === "turn/start"),
       4_000,
-      "codex receives user_turn command",
+      "codex receives turn/start request",
     );
-    const cmd = codex.commandsSent().find((c) => c.type === "user_turn");
-    expect((cmd?.data as Record<string, unknown> | undefined)?.["input"]).toBe(
+    const cmd = codex.sentRequests().find((r) => r.method === "turn/start");
+    expect((cmd?.params as Record<string, unknown> | undefined)?.["prompt"]).toBe(
       "ping from iphone",
     );
 
@@ -348,8 +350,8 @@ describe("E2E: Relay + Mac Host + raw iPhone offerer", () => {
     rawClient.close();
     iphoneWs.close();
     peerManager.closeAll();
-    session.stop();
     hostSignaling.close();
-    await codex.stop();
+    await codex.close();
+    void session;
   }, 30_000);
 });

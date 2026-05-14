@@ -28,10 +28,7 @@ import {
   writeHostConfig,
 } from "./config.js";
 import { detectCapabilities } from "./capabilities.js";
-import {
-  type CodexClient,
-  NullCodexClient,
-} from "./codex.js";
+import { NullCodexClient, startCodex } from "./codex.js";
 import { PeerManager, type PeerKey } from "./peer.js";
 import {
   SignalingClient,
@@ -45,6 +42,8 @@ import type {
   DeviceId,
   HostId,
 } from "@codex-link/protocol/rendezvous";
+import { asProjectId, type ProjectId } from "@codex-link/protocol/session";
+import type { CodexAppServerClient } from "@codex-link/codex-client";
 
 const STDOUT = process.stdout;
 const STDERR = process.stderr;
@@ -188,8 +187,12 @@ export const runInit = async (opts: InitOptions): Promise<void> => {
 interface StartOptions {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly relayUrlOverride?: string;
-  readonly codexClient?: CodexClient;
+  /** Optional Codex client injection for tests. If absent and `useNullCodex` is true, uses NullCodexClient. Otherwise spawns real `codex app-server`. */
+  readonly codexClient?: CodexAppServerClient;
+  readonly useNullCodex?: boolean;
   readonly turnUrls?: readonly string[];
+  /** Project ID to associate Codex events with. Default: derived from hostId. */
+  readonly defaultProjectId?: ProjectId;
 }
 
 export interface StartedHost {
@@ -218,8 +221,37 @@ export const runStart = async (opts: StartOptions): Promise<StartedHost> => {
     codexCommand: config.codexCommand,
   });
 
-  const codex: CodexClient = opts.codexClient ?? new NullCodexClient();
-  await codex.start();
+  // Codex client: either injected (tests), null (offline dev), or real (default).
+  let codex: CodexAppServerClient;
+  let codexCleanup: () => Promise<void> = async () => {};
+  if (opts.codexClient !== undefined) {
+    codex = opts.codexClient;
+  } else if (opts.useNullCodex === true) {
+    codex = new NullCodexClient({
+      onNotification: (n) => session.handleCodexNotification(n),
+      onServerRequest: (r) => session.handleCodexServerRequest(r),
+    });
+  } else {
+    const started = await startCodex({
+      codexCommand: config.codexCommand,
+      onNotification: (n) => session.handleCodexNotification(n),
+      onServerRequest: (r) => session.handleCodexServerRequest(r),
+    });
+    codex = started.client;
+    codexCleanup = async () => {
+      try {
+        await started.client.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        started.childProcess.kill("SIGTERM");
+      } catch {
+        /* ignore */
+      }
+    };
+    log("info", "codex_app_server_started", { port: started.port, url: started.url });
+  }
 
   const turnUrls = opts.turnUrls ?? ["stun:stun.l.google.com:19302"];
   const peerManager = new PeerManager(
@@ -242,13 +274,16 @@ export const runStart = async (opts: StartOptions): Promise<StartedHost> => {
   );
   peerManager.startStatsLoop();
 
+  const defaultProjectId =
+    opts.defaultProjectId ?? asProjectId(`${config.hostId as string}:default`);
+
   const session = new SessionManager({
     hostId: config.hostId,
     hostCapabilities: capabilities,
     codex,
     peers: peerManager,
+    defaultProjectId,
   });
-  session.start();
 
   const handlers: SignalingClientHandlers = {
     onWelcome: (info) => {
@@ -296,8 +331,9 @@ export const runStart = async (opts: StartOptions): Promise<StartedHost> => {
   const stop = async (): Promise<void> => {
     signaling.close();
     peerManager.closeAll();
-    session.stop();
-    await codex.stop();
+    await codexCleanup();
+    void session; // keep reference so it isn't GC'd before stop
+    void codex;
   };
 
   return { signaling, peerManager, session, stop };

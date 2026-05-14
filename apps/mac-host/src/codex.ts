@@ -1,190 +1,188 @@
-// Codex app-server client 抽象化.
+// Codex app-server client (thin re-export + spawn helper).
 //
-// Mac Host が `codex app-server --listen ws://127.0.0.1:0` を起動して
-// loopback WebSocket で話す経路を「正規」とする. 他経路 (stdio / VS Code IPC
-// follower) は将来.
+// 親リポと同じ design: `codex app-server --listen ws://127.0.0.1:0` を起動して
+// WebSocket JSON-RPC で話す. Mac Host は `@codex-link/codex-client` の
+// `CodexAppServerClient` (= JSON-RPC 2.0 client) をそのまま使う.
 //
-// このファイルでは **interface だけ** 定義し、複数 transport を後で差し込める
-// 形にしておく. 実 spawn / IPC は Phase 6 で詰める (Codex CLI の事前 install
-// が必要なため、本フェーズでは抽象化のみ).
+// このファイルでは spawn + listen 取得 + WS connect を一発で行う helper を
+// 提供する. NullCodexClient (test stub) も用意してオフライン test を可能にする.
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createInterface } from "node:readline";
 
-// ===== Public types =====
+import {
+  createCodexAppServerWebSocketClient,
+  type CodexAppServerClient,
+  type CodexAppServerWebSocketClientOptions,
+  type JsonRpcNotification,
+  type JsonRpcServerRequest,
+} from "@codex-link/codex-client";
 
-// Codex app-server から受け取る生 event. type と data の二段だけ強制し、
-// 中身は normalizer (codex-events.ts) でハンドリングする.
-export interface CodexAppServerEvent {
-  readonly type: string;
-  readonly data?: Record<string, unknown>;
-  readonly threadId?: string;
-  readonly id?: string;
+// ===== Real Codex: spawn + connect =====
+
+export interface StartCodexOptions {
+  readonly codexCommand?: string; // default: "codex"
+  readonly cwd?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly clientInfo?: { name: string; title: string; version: string };
+  readonly experimentalApi?: boolean;
+  readonly startupTimeoutMs?: number;
+  readonly onNotification?: (n: JsonRpcNotification) => void;
+  readonly onServerRequest?: (r: JsonRpcServerRequest) => void;
 }
 
-// Mac Host から Codex に投げるコマンド (UI action 由来).
-export interface CodexAppServerCommand {
-  readonly type: string;
-  readonly data?: Record<string, unknown>;
-  readonly threadId?: string;
-  readonly id?: string;
-}
-
-export interface CodexClient {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  sendCommand(cmd: CodexAppServerCommand): Promise<void>;
-  // 受信 event をハンドラに流す. 複数登録可.
-  onEvent(handler: (e: CodexAppServerEvent) => void): () => void;
-  // 接続状態. running = true なら sendCommand 可.
-  isRunning(): boolean;
-}
-
-// ===== Codex app-server port discovery =====
-//
-// `codex app-server --listen ws://127.0.0.1:0` は実際の port を出力する.
-// 仕様確定までは $TMPDIR/codex-link-app-server.json に port を書き出す
-// helper を別に持つこととし、ここでは「port を読み出す」関数だけ用意.
-
-const PORT_FILE = join(tmpdir(), "codex-link-app-server.json");
-
-export interface AppServerPortFile {
+export interface StartedCodex {
+  readonly client: CodexAppServerClient;
   readonly port: number;
-  readonly pid: number;
   readonly url: string;
-  readonly writtenAt: number;
+  readonly childProcess: ChildProcessWithoutNullStreams;
 }
 
-export const writeAppServerPortFile = async (
-  info: AppServerPortFile,
-): Promise<void> => {
-  await mkdir(tmpdir(), { recursive: true });
-  await writeFile(PORT_FILE, JSON.stringify(info, null, 2), {
-    encoding: "utf8",
-    mode: 0o600,
+/**
+ * `codex app-server --listen ws://127.0.0.1:0` を spawn し、stderr の listen
+ * banner から port を拾って WebSocket client を確立する.
+ */
+export const startCodex = async (
+  opts: StartCodexOptions = {},
+): Promise<StartedCodex> => {
+  const child = spawn(
+    opts.codexCommand ?? "codex",
+    ["app-server", "--listen", "ws://127.0.0.1:0"],
+    {
+      cwd: opts.cwd,
+      env: opts.env ?? process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+
+  const stderrLines = createInterface({ input: child.stderr });
+  const port = await new Promise<number>((resolve, reject) => {
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (resolved) return;
+      reject(new Error(`Timed out waiting for codex app-server WS banner (${opts.startupTimeoutMs ?? 10_000}ms)`));
+    }, opts.startupTimeoutMs ?? 10_000);
+    timeout.unref?.();
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+    const onLine = (line: string): void => {
+      if (resolved) return;
+      const match = /ws:\/\/127\.0\.0\.1:(\d+)/.exec(line);
+      if (match && match[1]) {
+        resolved = true;
+        cleanup();
+        resolve(Number.parseInt(match[1], 10));
+      }
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      cleanup();
+      if (!resolved) {
+        reject(new Error(`codex app-server exited before listening (code=${code}, signal=${signal})`));
+      }
+    };
+    const onError = (e: Error): void => {
+      cleanup();
+      if (!resolved) reject(e);
+    };
+    stderrLines.on("line", onLine);
+    child.once("exit", onExit);
+    child.once("error", onError);
   });
+
+  const url = `ws://127.0.0.1:${port}`;
+  const wsOptions: CodexAppServerWebSocketClientOptions = {
+    url,
+    clientInfo: opts.clientInfo ?? {
+      name: "codex_link_mac_host",
+      title: "Codex Link Mac Host (p2p)",
+      version: "0.1.0",
+    },
+    experimentalApi: opts.experimentalApi ?? true,
+    ...(opts.onNotification ? { onNotification: opts.onNotification } : {}),
+    ...(opts.onServerRequest ? { onServerRequest: opts.onServerRequest } : {}),
+  };
+  const client = await createCodexAppServerWebSocketClient(wsOptions);
+  await client.initialize();
+  return { client, port, url, childProcess: child };
 };
 
-export const readAppServerPortFile = async (): Promise<AppServerPortFile | null> => {
-  try {
-    const raw = await readFile(PORT_FILE, "utf8");
-    const parsed = JSON.parse(raw) as Partial<AppServerPortFile>;
-    if (
-      typeof parsed.port === "number" &&
-      typeof parsed.pid === "number" &&
-      typeof parsed.url === "string"
-    ) {
-      return {
-        port: parsed.port,
-        pid: parsed.pid,
-        url: parsed.url,
-        writtenAt: parsed.writtenAt ?? 0,
-      };
-    }
-    return null;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-    return null;
+// ===== Test stub: NullCodexClient =====
+//
+// `CodexAppServerClient` インタフェースを満たすが、実際の codex プロセスは
+// spawn しない. テストや Codex 未インストール環境で SessionManager 周辺を
+// 触る時に使う.
+
+import type {
+  CodexAppServerClientOptions,
+  JsonRpcId,
+} from "@codex-link/codex-client";
+
+export class NullCodexClient implements CodexAppServerClient {
+  private readonly requests: Array<{ method: string; params?: unknown }> = [];
+  private readonly notifications: Array<{ method: string; params?: unknown }> = [];
+  private readonly handlers: {
+    notification?: (n: JsonRpcNotification) => void;
+    serverRequest?: (r: JsonRpcServerRequest) => void;
+  } = {};
+  private nextResponseId = 1;
+
+  constructor(opts: { onNotification?: (n: JsonRpcNotification) => void; onServerRequest?: (r: JsonRpcServerRequest) => void } = {}) {
+    if (opts.onNotification) this.handlers.notification = opts.onNotification;
+    if (opts.onServerRequest) this.handlers.serverRequest = opts.onServerRequest;
   }
-};
-
-// ===== NullCodexClient (テスト / Phase 6 まで CLI 無しでも動かせる stub) =====
-
-export class NullCodexClient implements CodexClient {
-  private handlers: Set<(e: CodexAppServerEvent) => void> = new Set();
-  private running = false;
-  private readonly sentCommands: CodexAppServerCommand[] = [];
 
   async start(): Promise<void> {
-    this.running = true;
+    /* noop */
   }
-
-  async stop(): Promise<void> {
-    this.running = false;
+  async initialize(): Promise<unknown> {
+    return { ok: true };
   }
-
-  async sendCommand(cmd: CodexAppServerCommand): Promise<void> {
-    if (!this.running) throw new Error("NullCodexClient is not running");
-    this.sentCommands.push(cmd);
+  async request(method: string, params?: unknown): Promise<unknown> {
+    this.requests.push({ method, params });
+    return { id: `req_${this.nextResponseId++}` };
   }
-
-  onEvent(handler: (e: CodexAppServerEvent) => void): () => void {
-    this.handlers.add(handler);
-    return () => this.handlers.delete(handler);
+  startThread(params: unknown): Promise<unknown> { return this.request("thread/start", params); }
+  resumeThread(params: unknown): Promise<unknown> { return this.request("thread/resume", params); }
+  startTurn(params: unknown): Promise<unknown> { return this.request("turn/start", params); }
+  steerTurn(params: unknown): Promise<unknown> { return this.request("turn/steer", params); }
+  interruptTurn(params: unknown): Promise<unknown> { return this.request("turn/interrupt", params); }
+  listModels(params?: unknown): Promise<unknown> { return this.request("model/list", params); }
+  listExperimentalFeatures(params?: unknown): Promise<unknown> { return this.request("experimentalFeature/list", params); }
+  readConfig(params: unknown): Promise<unknown> { return this.request("config/read", params); }
+  listThreads(params?: unknown): Promise<unknown> { return this.request("thread/list", params); }
+  readThread(params: unknown): Promise<unknown> { return this.request("thread/read", params); }
+  listThreadTurns(params: unknown): Promise<unknown> { return this.request("thread/turns/list", params); }
+  respondToServerRequest(_id: JsonRpcId, _result: unknown): void {
+    /* noop */
   }
-
-  isRunning(): boolean {
-    return this.running;
+  notify(method: string, params?: unknown): void {
+    this.notifications.push({ method, params });
+  }
+  async close(): Promise<void> {
+    /* noop */
   }
 
   // ===== Test API =====
 
-  emit(event: CodexAppServerEvent): void {
-    for (const h of this.handlers) h(event);
+  /** Inject a notification as if it came from Codex. */
+  emitNotification(message: JsonRpcNotification): void {
+    this.handlers.notification?.(message);
   }
-
-  commandsSent(): readonly CodexAppServerCommand[] {
-    return this.sentCommands;
+  /** Inject a server request as if it came from Codex. */
+  emitServerRequest(message: JsonRpcServerRequest): void {
+    this.handlers.serverRequest?.(message);
   }
-}
-
-// ===== SpawnedCodexClient =====
-//
-// `codex app-server --listen ws://127.0.0.1:0` を spawn し、出力から port を
-// 拾って WebSocket で話す. 実装は Phase 6 (Codex CLI の事前 install が必要)
-// で詰める. 現段階では spawn の最低限だけ用意.
-
-export interface SpawnedCodexClientOptions {
-  readonly codexCommand: string; // e.g. "codex"
-  readonly extraArgs?: readonly string[];
-  readonly env?: NodeJS.ProcessEnv;
-}
-
-export class SpawnedCodexClient implements CodexClient {
-  private child: ChildProcess | null = null;
-  private handlers: Set<(e: CodexAppServerEvent) => void> = new Set();
-  private readonly options: SpawnedCodexClientOptions;
-
-  constructor(options: SpawnedCodexClientOptions) {
-    this.options = options;
+  sentRequests(): readonly { method: string; params?: unknown }[] {
+    return this.requests;
   }
-
-  async start(): Promise<void> {
-    if (this.child !== null) return;
-    this.child = spawn(
-      this.options.codexCommand,
-      ["app-server", "--listen", "ws://127.0.0.1:0", ...(this.options.extraArgs ?? [])],
-      {
-        env: this.options.env ?? process.env,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
-    // stdout から port 行を拾うのは Phase 6 で実装. 今は spawn 自体の起動だけ.
-  }
-
-  async stop(): Promise<void> {
-    if (this.child === null) return;
-    try {
-      this.child.kill("SIGTERM");
-    } catch {
-      // ignore
-    }
-    this.child = null;
-  }
-
-  async sendCommand(_cmd: CodexAppServerCommand): Promise<void> {
-    // Phase 6: WebSocket 経由で送る. 今は noop で throw.
-    throw new Error("SpawnedCodexClient.sendCommand is not yet wired in Phase 3.4");
-  }
-
-  onEvent(handler: (e: CodexAppServerEvent) => void): () => void {
-    this.handlers.add(handler);
-    return () => this.handlers.delete(handler);
-  }
-
-  isRunning(): boolean {
-    return this.child !== null && this.child.exitCode === null;
+  sentNotifications(): readonly { method: string; params?: unknown }[] {
+    return this.notifications;
   }
 }
+
+// ===== Re-export option types so cli / tests can type their callbacks =====
+
+export type { CodexAppServerClient, CodexAppServerClientOptions, JsonRpcNotification, JsonRpcServerRequest };

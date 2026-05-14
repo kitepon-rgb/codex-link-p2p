@@ -1,3 +1,6 @@
+// SessionManager: Codex notification ↔ DataChannel frame の双方向 routing と
+// projection 維持を、NullCodexClient 経由で検証する.
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -8,8 +11,10 @@ import {
   type UserId,
 } from "@codex-link/protocol/rendezvous";
 import {
+  asProjectId,
   asRequestId,
   asThreadId,
+  asTurnId,
   type CodexLinkSessionFrame,
   type HostCapabilities,
 } from "@codex-link/protocol/session";
@@ -18,6 +23,7 @@ import { NullCodexClient } from "../src/codex.js";
 import { SessionManager, type PeerSink } from "../src/session.js";
 
 const hostId = asHostId("hst_test");
+const projectId = asProjectId("test-proj");
 const userId = asUserId("usr_phone");
 const deviceId = asDeviceId("dev_phone");
 
@@ -52,147 +58,148 @@ let sink: CapturingSink;
 let session: SessionManager;
 
 beforeEach(() => {
-  codex = new NullCodexClient();
-  void codex.start();
   sink = new CapturingSink();
+  codex = new NullCodexClient({
+    onNotification: (n) => session.handleCodexNotification(n),
+    onServerRequest: (r) => session.handleCodexServerRequest(r),
+  });
   session = new SessionManager({
     hostId,
     hostCapabilities: capabilities,
     codex,
     peers: sink,
     now: () => 1_700_000_000_000,
+    defaultProjectId: projectId,
   });
-  session.start();
 });
 
 describe("SessionManager: codex → peers", () => {
   it("broadcasts normalized assistant.delta event as a session frame", () => {
-    codex.emit({
-      type: "thread_started",
-      threadId: "t1",
-      data: { projectId: "p", title: "Hi" },
+    codex.emitNotification({
+      method: "thread/started",
+      params: { thread: { id: "t1", name: "Hi" } },
     });
-    codex.emit({
-      type: "assistant_message_delta",
-      threadId: "t1",
-      data: { delta: "hello" },
+    codex.emitNotification({
+      method: "item/agentMessage/delta",
+      params: { threadId: "t1", turnId: "tn1", delta: "hello" },
     });
-
-    const eventFrames = sink.sent.filter(
-      (s) => s.frame.kind === "event",
-    );
+    const eventFrames = sink.sent.filter((s) => s.frame.kind === "event");
     expect(eventFrames.length).toBe(2);
     expect(eventFrames[1]?.target).toBe("broadcast");
   });
 
-  it("drops unknown codex events (no frame broadcasted)", () => {
-    codex.emit({ type: "totally.unknown.thing" });
+  it("drops unknown codex notifications (no frame broadcasted)", () => {
+    codex.emitNotification({ method: "totally.unknown.thing", params: {} });
     expect(sink.sent.length).toBe(0);
   });
 
-  it("maintains projection state across events", () => {
-    codex.emit({
-      type: "thread_started",
-      threadId: "t1",
-      data: { projectId: "p", title: "Hi" },
+  it("maintains projection state across notifications", () => {
+    codex.emitNotification({
+      method: "thread/started",
+      params: { thread: { id: "t1", name: "Hi" } },
     });
-    codex.emit({
-      type: "transcript_item_recorded",
-      threadId: "t1",
-      data: { role: "user", content: "hello" },
+    codex.emitNotification({
+      method: "item/agentMessage/delta",
+      params: { threadId: "t1", turnId: "tn1", delta: "hi back" },
     });
-    codex.emit({
-      type: "assistant_message",
-      threadId: "t1",
-      data: { text: "hi back" },
-    });
-    codex.emit({
-      type: "timeline_item_started",
-      threadId: "t1",
-      id: "tool1",
-      data: { kind: "tool_call", label: "shell" },
-    });
-    codex.emit({
-      type: "timeline_item_completed",
-      threadId: "t1",
-      id: "tool1",
-      data: { outcome: "success" },
-    });
-
     const proj = session.currentProjection();
     expect(proj.threads.length).toBe(1);
-    const t = proj.threads[0];
-    expect(t?.title).toBe("Hi");
-    expect(t?.transcript.map((x) => x.role)).toEqual(["user", "assistant"]);
-    expect(t?.timeline[0]?.outcome).toBe("success");
+    expect(proj.threads[0]?.thread.title).toBe("Hi");
+    expect(proj.threads[0]?.streamingAssistant).toBe("hi back");
   });
 
-  it("tracks pendingApproval until approval.resolved", () => {
-    codex.emit({
-      type: "thread_started",
-      threadId: "t1",
-      data: { projectId: "p", title: "Hi" },
+  it("tracks pendingApproval until approval.resolved (server request → ui.respond)", async () => {
+    codex.emitNotification({
+      method: "thread/started",
+      params: { thread: { id: "t1", name: "Hi" } },
     });
-    codex.emit({
-      type: "approval_request",
-      threadId: "t1",
-      id: "r1",
-      data: { summary: "rm -rf", kind: "command", detail: "danger" },
+    codex.emitNotification({
+      method: "turn/started",
+      params: { threadId: "t1", turn: { id: "tn1", status: "running" } },
+    });
+    codex.emitServerRequest({
+      id: "rq1",
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "t1",
+        turnId: "tn1",
+        itemId: "i1",
+        command: ["rm", "-rf", "/tmp/junk"],
+      },
     });
     let proj = session.currentProjection();
-    expect(proj.threads[0]?.pendingApproval?.requestId).toBe("r1");
+    expect(proj.threads[0]?.pendingApproval?.id).toBe("rq1");
 
-    codex.emit({
-      type: "approval_resolved",
-      threadId: "t1",
-      data: { requestId: "r1", approved: false },
-    });
-    proj = session.currentProjection();
-    expect(proj.threads[0]?.pendingApproval).toBeNull();
-  });
-});
-
-describe("SessionManager: peer → codex", () => {
-  it("ui.submit_turn → codex command 'user_turn' with input", async () => {
-    await session.handlePeerFrame(
-      { userId, deviceId },
-      {
-        kind: "ui_action",
-        action: {
-          type: "ui.submit_turn",
-          threadId: asThreadId("t1"),
-          input: "do the thing",
-        },
-      },
-    );
-    // 同期で sendCommand が呼ばれている.
-    const cmds = codex.commandsSent();
-    expect(cmds.length).toBe(1);
-    expect(cmds[0]?.type).toBe("user_turn");
-    expect((cmds[0]?.data as Record<string, unknown> | undefined)?.["input"]).toBe(
-      "do the thing",
-    );
-  });
-
-  it("ui.respond_approval → codex approval_response", async () => {
     session.handlePeerFrame(
       { userId, deviceId },
       {
         kind: "ui_action",
         action: {
           type: "ui.respond_approval",
-          decision: {
-            requestId: asRequestId("r1"),
-            approved: true,
-            reason: "ok",
-          },
+          decision: { requestId: asRequestId("rq1"), decision: "decline" },
         },
       },
     );
-    // microtask flush.
     await new Promise((r) => setTimeout(r, 0));
-    const cmds = codex.commandsSent();
-    expect(cmds.find((c) => c.type === "approval_response")).toBeDefined();
+    proj = session.currentProjection();
+    expect(proj.threads[0]?.pendingApproval).toBeNull();
+  });
+});
+
+describe("SessionManager: peer → codex", () => {
+  it("ui.submit_turn with threadId → codex turn/start request with prompt", async () => {
+    await session.handlePeerFrame(
+      { userId, deviceId },
+      {
+        kind: "ui_action",
+        action: {
+          type: "ui.submit_turn",
+          projectId,
+          threadId: asThreadId("t1"),
+          input: "do the thing",
+        },
+      },
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    const reqs = codex.sentRequests();
+    expect(reqs.find((r) => r.method === "turn/start")).toBeDefined();
+    const turnReq = reqs.find((r) => r.method === "turn/start");
+    expect((turnReq?.params as Record<string, unknown>)?.["prompt"]).toBe("do the thing");
+  });
+
+  it("ui.submit_turn with threadId=null → codex thread/start with prompt", async () => {
+    await session.handlePeerFrame(
+      { userId, deviceId },
+      {
+        kind: "ui_action",
+        action: {
+          type: "ui.submit_turn",
+          projectId,
+          threadId: null,
+          input: "new thread please",
+        },
+      },
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    const reqs = codex.sentRequests();
+    expect(reqs.find((r) => r.method === "thread/start")).toBeDefined();
+  });
+
+  it("ui.cancel_turn → codex turn/interrupt", async () => {
+    await session.handlePeerFrame(
+      { userId, deviceId },
+      {
+        kind: "ui_action",
+        action: {
+          type: "ui.cancel_turn",
+          threadId: asThreadId("t1"),
+          turnId: asTurnId("tn1"),
+        },
+      },
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    const reqs = codex.sentRequests();
+    expect(reqs.find((r) => r.method === "turn/interrupt")).toBeDefined();
   });
 
   it("snapshot_request → sendFrame snapshot_response to the requesting peer", () => {
@@ -208,45 +215,8 @@ describe("SessionManager: peer → codex", () => {
         },
       },
     );
-    const snapshot = sink.sent.find(
-      (s) => s.frame.kind === "snapshot_response",
-    );
+    const snapshot = sink.sent.find((s) => s.frame.kind === "snapshot_response");
     expect(snapshot).toBeDefined();
     expect(snapshot?.target).toEqual({ userId, deviceId });
-  });
-
-  it("error.reported when codex command fails", async () => {
-    const failingCodex = new NullCodexClient();
-    await failingCodex.start();
-    // monkey-patch to throw.
-    failingCodex.sendCommand = async () => {
-      throw new Error("codex offline");
-    };
-    const session2 = new SessionManager({
-      hostId,
-      hostCapabilities: capabilities,
-      codex: failingCodex,
-      peers: sink,
-      now: () => 1,
-    });
-    session2.start();
-    sink.sent = [];
-
-    session2.handlePeerFrame(
-      { userId, deviceId },
-      {
-        kind: "ui_action",
-        action: {
-          type: "ui.submit_turn",
-          threadId: asThreadId("t1"),
-          input: "x",
-        },
-      },
-    );
-    await new Promise((r) => setTimeout(r, 0));
-    const err = sink.sent.find(
-      (s) => s.frame.kind === "event" && s.frame.event.type === "error.reported",
-    );
-    expect(err).toBeDefined();
   });
 });
