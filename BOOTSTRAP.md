@@ -2,6 +2,10 @@
 
 このプロジェクトに入ってきた **新しい Claude セッション**向けの引き継ぎ書。最初にこれと [CLAUDE.md](CLAUDE.md) を必ず読む。
 
+> **状態 (2026-05-14): Phase 1〜9 完走済**. 後続の Phase 10〜14 (MVP 完成までの計画) は
+> [docs/roadmap.md](docs/roadmap.md) に集約。本書は Phase 1〜9 の歴史的記録と、Phase 9
+> 完走時に判明した応急処置 (TODO セクション) を残す。
+
 ## このプロジェクトは何か
 
 `codex-link-p2p`: iPhone から自宅 Mac (将来 Windows) 上の Codex CLI / `app-server` を操作するためのアプリ。

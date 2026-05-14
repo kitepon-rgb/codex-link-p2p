@@ -87,14 +87,22 @@ Windows Host も同一 npm package を将来想定 (`apps/win-host/` で `peer.t
 
 ## MVP 後 (本リポジトリの将来)
 
-- [x] **iOS QR pairing UI** (現状は手 paste / ファイル push の dev-only. 2026-05-14 実機検証で
-  Universal Clipboard 非同期事故が頻発. [BOOTSTRAP.md TODO](../BOOTSTRAP.md#ios--pairing-ux))
-- [x] **Mac Host PeerManager の stale peer 自動 cleanup**
-  (ICE-failed が長時間続く peer の自動 close、`signaling_welcome` 再受信時の peer 全消去.
-  [BOOTSTRAP.md TODO](../BOOTSTRAP.md#mac-host--peer-の自動-cleanup))
-- [x] iOS 診断ログ (`diag` / `fwDiag` / `pcDiag` / `sigClientLog`) の `#if DEBUG` ガード or 削除
-- [ ] AppleStore 配布対応 (Bundle ID 本番化、Live Activity 互換、配布証明書、プライバシー方針)
-- [ ] Windows Host の正式追加 (`apps/win-host/`)
-- [ ] Relay state の永続化
-- [ ] Device credential / TURN credential のローテーション
-- [ ] Codex thread / session 完全互換
+**Phase 1〜9 で完了済の応急処置** (詳細は [BOOTSTRAP.md](../BOOTSTRAP.md#todo--既知の応急処置-phase-9-完走後に判明)):
+
+- [x] iOS QR pairing UI
+- [x] Mac Host PeerManager の stale peer 自動 cleanup
+- [x] iOS 診断ログ (`diag` / `fwDiag` / `pcDiag` / `sigClientLog`) の `#if DEBUG` ガード
+
+**MVP の残作業は [docs/roadmap.md](roadmap.md) (Phase 10〜14)** に集約:
+- Phase 10: Mac Host → Codex 実 wire (`SpawnedCodexClient` + `codex-events.ts`)
+- Phase 11: Session protocol 完全化 + snapshot / ack / approval 4 種
+- Phase 12: iPhone UI を親リポと同等まで再構築 (Threads sheet / Settings / ConversationFeed / ApprovalBanner / Composer)
+- Phase 13: Live Activity (iOS 17+, Dynamic Island + Lock screen)
+- Phase 14: 実機 dogfood + launchd 化 + 安定化
+
+**MVP 後** (= MVP 完成後の next phase. roadmap.md 別セクション):
+
+- [ ] Phase 15: Windows Host の正式追加 (`apps/win-host/`)
+- [ ] Phase 16: AppleStore 配布対応 (Bundle ID 本番化、配布証明書、プライバシー方針、Live Activity 審査互換)
+- [ ] Phase 17: Relay state の永続化 / Device credential / TURN credential のローテーション
+- [ ] Phase 18: 多人数 / multi-host (1 user が複数 Mac を pair)

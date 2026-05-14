@@ -34,7 +34,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - broker、event cache、`client.toHost`、`host.event`、`subscribeHost` 系の概念を 1 行たりとも書かない。
 - 「とりあえず動かすために Relay を中継させる」を絶対にやらない。NAT 越え失敗時の fallback も TURN credential 経由 (coturn) のみ。
 - AppleStore 公開対応の延期を理由に Relay 経由データに後退しない。
-- E2E privacy / 完全な thread / session 互換 / 中央 Codex 実行 を追加しない。MVP 非目標。
+- 中央 Codex 実行 (Relay が Codex を直接 spawn する形) / Relay を超えた payload 秘匿 (E2E privacy) を追加しない。MVP 非目標。
+- **完全な thread / session 互換は MVP 必須** ([docs/roadmap.md](docs/roadmap.md) Phase 10〜14)。「MVP 非目標」と勘違いして簡略化しない。
 - placeholder device session の上に production-grade auth を勝手に積まない。
 - doc 上だけで存在しない build / test command を書かない。
 
@@ -78,11 +79,12 @@ swift test
 
 ## 関連ドキュメント
 
-- [BOOTSTRAP.md](BOOTSTRAP.md): 新セッションが pick up する時の起点。Phase 1-9 の実装計画。
+- [BOOTSTRAP.md](BOOTSTRAP.md): 新セッションが pick up する時の起点。**Phase 1〜9 完走済**.
+- [docs/roadmap.md](docs/roadmap.md): **Phase 10〜14 (MVP 完成までの計画書)**. Codex 実 wire / iPhone UI 完全再現 / Live Activity / 実機 dogfood.
 - [docs/architecture.md](docs/architecture.md): topology、signaling sequence、データ平面。
 - [docs/security-model.md](docs/security-model.md): DTLS-SRTP E2E、Relay の payload-blind 性。
 - [docs/requirements.md](docs/requirements.md): 機能 / 非機能要件。
-- [docs/mvp-plan.md](docs/mvp-plan.md): MVP の Phase 計画。
+- [docs/mvp-plan.md](docs/mvp-plan.md): 初期 MVP 計画 (Phase 1〜9 中心). MVP 完成までの全体像は roadmap.md 側。
 
 ## 参照リポジトリ (読み出しのみ)
 
