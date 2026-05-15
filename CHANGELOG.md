@@ -3,10 +3,50 @@
 Phases 10〜14 (= MVP roadmap) で実装された変更を時系列でまとめる. Phase 1〜9
 までは BOOTSTRAP.md に集約済.
 
-## Unreleased / dogfood (Phase 14c)
+> **⚠ ARCHIVED (2026-05-15)**
+> 本プロジェクトは Phase 14c (実機 7 日 dogfood) の **0 日目** で終了.
+> OpenAI 公式 Codex mobile (ChatGPT iOS app) が同等機能を全プラン無料配布で
+> 発表したため (2026-05-14). `0.1.0-mvp` タグは打たない. 詳細は
+> [POSTMORTEM.md](POSTMORTEM.md).
 
-Phase 14c (実機 7 日 dogfood) は user 側のタスク. 完了した時点で `0.1.0-mvp`
-としてタグ付け. 途中で見つかった bug fix は順次追加.
+## Archive (2026-05-15)
+
+### docs: 学びの記録として全ドキュメント更新 (本 commit)
+- POSTMORTEM.md を新規追加 (終了の引き金 / 残した資産 / dogfood 生バグ /
+  学び 5 観点 / 公式版への切替手順).
+- CLAUDE.md / BOOTSTRAP.md / docs/roadmap.md / docs/mvp-plan.md /
+  CHANGELOG.md 冒頭に Archived banner を追加.
+- 既存の技術 reference (architecture / security-model / requirements /
+  deploy / dogfood-runbook) はそのまま保全.
+
+### feat(dogfood): Phase 14c で発覚した unfinished fix を保全 (`42fabf0`)
+2026-05-15 の実機 dogfood セッションで判明した 4 つの修正/診断を、最終形
+ではなく「dogfood で詰まった点を捕まえた状態」のまま固定.
+- Mac Host: SessionManager constructor で Default project を populate
+  (空 thread 状態で iPhone composer が出ない応急処置).
+- Mac Host: dispatchUIAction を broker 版と同形に書き直し
+  (thread/start → turn/start の 2 段階, input 配列形式, cwd / serviceName
+  / approvalsReviewer / experimentalRawEvents 必須引数化).
+- Mac Host: peer frame / Codex notification / dispatch の各段に JSON
+  構造化ログ.
+- iOS PeerConnection.send: frame drop 理由 + 成功時 bytes/preview を log.
+- iOS AppLifecycle.submitTurn 入口に diag.
+- iOS RootView.placeholder: thread 0 件時に「新規 thread 作成」composer
+  を表示 (TextField + Send → submitTurn(threadId: nil) で thread/start).
+- iOS project.yml: CodexLinkWidget extension の embed を一時コメント化
+  (provisioning profile 未登録回避).
+
+未修正で残した dogfood 観測:
+- 再 pair 直後の "Got a remote candidate without ICE transport" race
+  (offer setRemoteDescription 完了前に candidate 到着).
+- peer state が `.failed → connecting` 推移する瞬間に DC で送出された
+  event が落ちる疑い (frame は Mac Host まで届くが Codex 応答が iPhone
+  に戻らない経路あり).
+
+## Unreleased / dogfood (Phase 14c) — 未達のまま archive
+
+Phase 14c (実機 7 日 dogfood) は user 側のタスクだったが、上記理由により
+**0 日目で終了**. `0.1.0-mvp` タグ付けは行わない.
 
 ## Phase 14: dogfood-readiness + 安定化
 

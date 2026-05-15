@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **⚠ ARCHIVED (2026-05-15)**
+> 本プロジェクトは開発を終了した。OpenAI が 2026-05-14 に ChatGPT mobile app
+> に Codex remote control を発表したため、本プロジェクトの提供価値が公式機能で
+> 代替された。終了経緯と学びは [POSTMORTEM.md](POSTMORTEM.md) に集約。
+> 以下の鉄則は **当時の設計意図の保全用** として残す。新セッションでこの
+> リポジトリに対して新規実装を進める前に POSTMORTEM.md を読むこと。
+
 ## このリポジトリの位置づけ
 
 `codex-link-p2p` は、隣の `/Users/kite/Developer/codex-link` の **アーキ是正版** として新規に作るプロジェクト。

@@ -2,7 +2,14 @@
 
 このプロジェクトに入ってきた **新しい Claude セッション**向けの引き継ぎ書。最初にこれと [CLAUDE.md](CLAUDE.md) を必ず読む。
 
-> **状態 (2026-05-14): Phase 1〜9 完走済**. 後続の Phase 10〜14 (MVP 完成までの計画) は
+> **⚠ ARCHIVED (2026-05-15)**
+> プロジェクト終了。OpenAI 公式 Codex mobile (ChatGPT iOS app) に追従不能と
+> 判断 (2026-05-14 発表)。詳細は [POSTMORTEM.md](POSTMORTEM.md) を読むこと。
+> 以下の Phase 1〜9 の歴史記録は当時の到達点として保全する。新セッションが
+> このリポジトリで実装を再開する場合は、POSTMORTEM の「7. 公式版を使う上で
+> の切替手順」も読んだ上で着手判断を user に確認すること。
+
+> **状態 (2026-05-14 時点 = Archive 直前): Phase 1〜9 完走済**. 後続の Phase 10〜14 (MVP 完成までの計画) は
 > [docs/roadmap.md](docs/roadmap.md) に集約。本書は Phase 1〜9 の歴史的記録と、Phase 9
 > 完走時に判明した応急処置 (TODO セクション) を残す。
 

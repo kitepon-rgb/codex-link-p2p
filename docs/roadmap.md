@@ -1,12 +1,19 @@
 # Roadmap (MVP 完成までの計画書)
 
+> **⚠ ARCHIVED (2026-05-15)**
+> 本 roadmap の MVP 定義 (Phase 14c = 連続 7 日の実機 dogfood) は **未達のまま
+> 終了**。OpenAI 公式 Codex mobile (ChatGPT iOS app) が同等機能を全プラン無料
+> 配布で発表したため (2026-05-14)、本プロジェクトの提供価値が代替された。
+> 終了経緯と学びは [POSTMORTEM.md](../POSTMORTEM.md) を参照。
+> 以下の Phase 10〜14 の計画文は **当時意図した到達点の記録** として残す。
+
 `codex-link-p2p` の **Phase 1〜9** は [BOOTSTRAP.md](../BOOTSTRAP.md) に書かれていて、
 **WebRTC P2P 配管 (QR pairing + DataChannel) が iPhone⇄Mac で通る** ところまでで完走済.
 
 このドキュメントはそこから先 **MVP 完成までの Phase 10〜14** の計画書. MVP の定義と、各
 Phase で何を作る / 何を作らないかをここに集約する.
 
-## 進捗 (2026-05-15)
+## 進捗 (2026-05-15 = Archive 時点)
 
 | Phase | 状態 | コミット |
 |---|---|---|
@@ -16,7 +23,7 @@ Phase で何を作る / 何を作らないかをここに集約する.
 | 13 — Live Activity (iOS 17+) | ✅ 完了 (Widget extension target + Dynamic Island + Lock screen) | `790594d` |
 | 14a — Mac Host launchd 化 | ✅ 完了 (`apps/mac-host/launchd/`) | `77717b8` |
 | 14b — README で end-user 手順 | ✅ 完了 | `77717b8` |
-| 14c — 実機 7 日 dogfood 検証 | ⏳ user 手動タスク (毎日業務で使う) | — |
+| 14c — 実機 7 日 dogfood 検証 | ❌ **0 日 / 7 日で archive**. 実機 1 セッション目で `dispatchUIAction` の broker 版互換抜け + ICE candidate race condition + DC frame silencing を捕まえた直後に OpenAI 発表で終了 (`42fabf0` に dogfood-debug の最終状態を保全) | — |
 
 ---
 

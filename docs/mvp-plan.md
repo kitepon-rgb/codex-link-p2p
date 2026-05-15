@@ -1,5 +1,11 @@
 # MVP Plan
 
+> **⚠ ARCHIVED (2026-05-15)**
+> プロジェクト終了。OpenAI 公式 Codex mobile に追従不能と判断。
+> 詳細は [POSTMORTEM.md](../POSTMORTEM.md)、Phase 10〜14 の到達点は
+> [docs/roadmap.md](roadmap.md) を参照。本書は Phase 1〜9 (= P2P signaling
+> 実装そのもの) の俯瞰として保全する。
+
 実装は [BOOTSTRAP.md](../BOOTSTRAP.md) に詳細展開。本ドキュメントは Phase の俯瞰用。
 
 ## 現状サマリ (2026-05-13 時点)
