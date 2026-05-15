@@ -184,6 +184,7 @@ public final class AppLifecycle: ObservableObject {
     }
 
     public func submitTurn(projectId: ProjectId, threadId: ThreadId?, input: String) {
+        fwDiag("submitTurn called: projectId=\(projectId.rawValue), threadId=\(threadId?.rawValue ?? "<new>"), input.count=\(input.count)")
         peer.send(.uiAction(.submitTurn(projectId: projectId, threadId: threadId, input: input)))
     }
 

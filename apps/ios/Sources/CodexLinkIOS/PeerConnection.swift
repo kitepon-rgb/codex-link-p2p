@@ -221,10 +221,20 @@ public final class PeerConnection: NSObject, @unchecked Sendable {
     }
 
     public func send(_ frame: CodexLinkSessionFrame) {
-        guard let dc = dataChannel else { return }
-        guard dc.readyState == .open else { return }
-        guard let data = try? JSONEncoder().encode(frame) else { return }
-        // text frame として送る (Host 側も text を JSON.parse する).
+        guard let dc = dataChannel else {
+            pcDiag("send: NO dataChannel (frame dropped)")
+            return
+        }
+        guard dc.readyState == .open else {
+            pcDiag("send: dc not open (state=\(dc.readyState.rawValue), frame dropped)")
+            return
+        }
+        guard let data = try? JSONEncoder().encode(frame) else {
+            pcDiag("send: JSONEncoder failed (frame dropped)")
+            return
+        }
+        let preview = String(data: data.prefix(120), encoding: .utf8) ?? "<binary>"
+        pcDiag("send (\(data.count) bytes): \(preview)")
         let buf = RTCDataBuffer(data: data, isBinary: false)
         dc.sendData(buf)
     }

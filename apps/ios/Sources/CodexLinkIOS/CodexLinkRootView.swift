@@ -273,10 +273,42 @@ public struct CodexLinkRootView: View {
         .padding(8)
     }
 
+    /// thread が 1 件も無い時の画面. 新規 thread を作る composer を出す
+    /// (UISubmitTurn(threadId=null) で Codex に thread/start を投げる).
     private var placeholder: some View {
-        VStack {
+        let state = lifecycle.projection.state
+        let firstProject = state.projects.first
+        return VStack(spacing: 16) {
             Spacer()
-            Text("Waiting for Host…").foregroundColor(.secondary)
+            if state.projects.isEmpty {
+                Text("プロジェクト情報を取得中…").foregroundColor(.secondary)
+                Text("Mac Host から project list が届くまでお待ちください.")
+                    .font(.caption).foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            } else if let project = firstProject {
+                Text("新規 thread を作成").font(.headline)
+                Text("プロジェクト: \(project.name)").font(.caption).foregroundColor(.secondary)
+                HStack {
+                    TextField("最初の prompt…", text: $input, axis: .vertical)
+                        .lineLimit(3...6)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        lifecycle.submitTurn(
+                            projectId: project.id,
+                            threadId: nil,
+                            input: trimmed
+                        )
+                        input = ""
+                    } label: {
+                        Image(systemName: "paperplane.fill")
+                    }
+                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 16)
+            }
             Spacer()
         }
     }

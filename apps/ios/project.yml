@@ -45,9 +45,13 @@ targets:
     dependencies:
       - package: CodexLinkIOS
         product: CodexLinkIOS
-      - target: CodexLinkWidget
-        embed: true
-        codeSign: true
+      # Widget extension: smoke test 期間中は provisioning profile 未登録のため
+      # 一時的に embed を外す. Live Activity は CodexLinkIOS package 内では生きて
+      # いるが、Widget extension が無いと iOS から表示はされない. dogfood の本筋
+      # (Codex chat 同期) には影響しない. Widget 復帰時は下記を有効化:
+      # - target: CodexLinkWidget
+      #   embed: true
+      #   codeSign: true
     info:
       path: App/Info.plist
       properties:

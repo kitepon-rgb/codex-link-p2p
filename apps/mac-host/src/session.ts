@@ -111,12 +111,30 @@ export class SessionManager {
       defaultProjectId: options.defaultProjectId,
     };
     this.capabilities = options.hostCapabilities;
+    // Codex がまだ project list を返してくれていない時点でも iPhone が
+    // 「最初の thread を作る」操作をできるよう、暫定 default project を入れる.
+    // 後から real project list が届けば project.list.updated で上書きされる.
+    this.projects = [
+      {
+        id: options.defaultProjectId,
+        hostId: options.hostId,
+        name: "Default",
+        pathLabel: process.cwd(),
+      },
+    ];
   }
 
   // ===== Codex side =====
 
   handleCodexNotification(message: JsonRpcNotification): void {
     const events = codexNotificationToEvents(message, this.options.defaultProjectId);
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "info",
+      msg: "codex_notification",
+      method: message.method,
+      eventCount: events.length,
+    }));
     for (const ev of events) {
       this.processOutboundEvent(ev);
     }
@@ -144,6 +162,15 @@ export class SessionManager {
     peer: { userId: UserId; deviceId: DeviceId },
     frame: CodexLinkSessionFrame,
   ): void {
+    // dogfood 中の不具合追跡用. 後で削除可.
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "info",
+      msg: "peer_frame_received",
+      from: `${peer.userId as string}:${peer.deviceId as string}`,
+      kind: frame.kind,
+      ...(frame.kind === "ui_action" ? { action: frame.action.type } : {}),
+    }));
     switch (frame.kind) {
       case "ui_action":
         void this.dispatchUIAction(frame.action);
@@ -152,31 +179,62 @@ export class SessionManager {
         this.sendSnapshotTo(peer);
         return;
       case "ack":
-        // 将来 retransmit logic で使う. 今は no-op.
         return;
       case "event":
       case "snapshot_response":
-        // 通常 client → host でこの方向は来ない. 来ても無視.
         return;
     }
   }
 
   private async dispatchUIAction(action: CodexLinkUIAction): Promise<void> {
+    // dogfood diag
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify({
+      level: "info",
+      msg: "dispatch_ui_action",
+      type: action.type,
+      ...(action.type === "ui.submit_turn"
+        ? { threadId: action.threadId, inputLen: action.input.length }
+        : {}),
+    }));
     try {
       switch (action.type) {
-        case "ui.submit_turn":
+        case "ui.submit_turn": {
+          // broker 版と同形の API 呼び出し:
+          //   1. threadId が無ければ thread/start で作る
+          //   2. turn/start に threadId + input (text element 配列) を渡す
+          let threadId: string;
+          const cwd = process.cwd();
           if (action.threadId !== null) {
-            await this.options.codex.startTurn({
-              threadId: action.threadId as string,
-              prompt: action.input,
-            });
+            threadId = action.threadId as string;
+            // 既存 thread なら resumeThread しておく
+            await this.options.codex.resumeThread({ threadId, cwd }).catch(() => {});
           } else {
-            await this.options.codex.startThread({
-              projectId: action.projectId as string,
-              prompt: action.input,
+            const threadResp = await this.options.codex.startThread({
+              cwd,
+              serviceName: "codex-link-p2p-mac-host",
+              approvalsReviewer: "user",
+              experimentalRawEvents: true,
+              persistExtendedHistory: false,
             });
+            // eslint-disable-next-line no-console
+            console.error(JSON.stringify({ level: "info", msg: "codex_thread_start_resp", resp: threadResp }));
+            const respObj = threadResp as { thread?: { id?: string } };
+            const newId = respObj?.thread?.id;
+            if (typeof newId !== "string") {
+              throw new Error("thread/start did not return thread.id");
+            }
+            threadId = newId;
           }
+          const turnResp = await this.options.codex.startTurn({
+            threadId,
+            input: [{ type: "text", text: action.input, text_elements: [] }],
+            cwd,
+          });
+          // eslint-disable-next-line no-console
+          console.error(JSON.stringify({ level: "info", msg: "codex_turn_start_resp", resp: turnResp }));
           return;
+        }
         case "ui.respond_approval": {
           const serverRequestId = this.pendingApprovals.get(action.decision.requestId);
           if (serverRequestId !== undefined) {
@@ -210,6 +268,12 @@ export class SessionManager {
           return;
       }
     } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        level: "warn",
+        msg: "dispatch_ui_action_failed",
+        error: (e as Error).message,
+      }));
       this.processOutboundEvent({
         type: "error.reported",
         scope: "codex",
