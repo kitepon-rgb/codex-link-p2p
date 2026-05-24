@@ -20,7 +20,7 @@
 3 つの面で構成する:
 - `apps/ios` (ネイティブ iPhone app、将来 AppleStore 配布)
 - `apps/mac-host` (macOS Host、`npm install -g @codex-link/host` 一発配布)
-- `services/relay` (kite サーバー `kitepon.dynv6.net` で動くマルチテナント **認証 + signaling + TURN credential 発行**ハブ)
+- `services/relay` (kite サーバー `kitepon.dev` で動くマルチテナント **認証 + signaling + TURN credential 発行**ハブ)
 
 共有コード:
 - `packages/protocol` (wire 型。`rendezvous` と `session` を物理的に分離)
@@ -173,7 +173,7 @@ ICE servers は **TURN credential 取得後** に peer 注入 (race 回避)。
 
 `apps/ios/CodexLink.xcodeproj` の app target:
 - Bundle ID: `dev.codexlink.ios` (将来 AppleStore 提出時に本番 ID へ)
-- `Info.plist` の `CodexLinkRelayURL` 既定: `https://codex-link-p2p.kitepon.dynv6.net` (Simulator 開発時のみ `http://127.0.0.1:3000` でローカル Relay)
+- `Info.plist` の `CodexLinkRelayURL` 既定: `https://codex-link-p2p.kitepon.dev` (Simulator 開発時のみ `http://127.0.0.1:3000` でローカル Relay)
 
 検証:
 - `apps/ios/Tests/CodexLinkIOSTests/PeerConnectionTests.swift`: signaling mock + XCTest 内 RTCPeerConnection 2 個結線で DataChannel 疎通
@@ -189,8 +189,8 @@ ICE servers は **TURN credential 取得後** に peer 注入 (race 回避)。
 
 ICE servers (Mac Host / iPhone が peer 構築時に注入):
 - `stun:stun.l.google.com:19302`
-- `turn:codex-link-p2p.kitepon.dynv6.net:3478` (kite サーバー)
-- `turns:codex-link-p2p.kitepon.dynv6.net:5349` (TLS 経由)
+- `turn:codex-link-p2p.kitepon.dev:3478` (kite サーバー)
+- `turns:codex-link-p2p.kitepon.dev:5349` (TLS 経由)
 
 検証:
 - `turnutils_uclient` で疎通確認
@@ -217,7 +217,7 @@ ICE servers (Mac Host / iPhone が peer 構築時に注入):
 
 - `apps/mac-host/package.json` に `bin: codex-link-host`、`files` に dist、`prepublishOnly` で tsc build
 - `codex-link host init` サブコマンドで pairing code 表示 + Keychain 書き込み + host.json 生成を CLI に内製
-- Relay URL は `https://codex-link-p2p.kitepon.dynv6.net` をパッケージにハードコード、`--relay` で上書き可
+- Relay URL は `https://codex-link-p2p.kitepon.dev` をパッケージにハードコード、`--relay` で上書き可
 - `node-datachannel` は pre-built なので追加の native build chain 不要 → 真の npm 一発
 - 検証: クリーンな Mac VM で `npm i -g @codex-link/host` → `codex-link host init` → QR スキャン → turn 発火まで疎通
 
@@ -325,5 +325,5 @@ ICE servers (Mac Host / iPhone が peer 構築時に注入):
 新セッションが詰まった時に kite に確認すべき項目:
 - Bundle ID / Team ID / 配布証明書 (AppleStore 用)
 - 本番 Relay デプロイ手順 (compose、Caddy reverse proxy、coturn の TLS cert)
-- `kitepon.dynv6.net` の sub-domain (`codex-link-p2p.kitepon.dynv6.net`、HTTPS + TURN を 1 ホスト名に同居) の DNS 設定
+- `kitepon.dev` の sub-domain (`codex-link-p2p.kitepon.dev`、HTTPS + TURN を 1 ホスト名に同居) の DNS 設定
 - iPhone app の dev provisioning が個人 Team (TPWX489GV4) のままで進めるか

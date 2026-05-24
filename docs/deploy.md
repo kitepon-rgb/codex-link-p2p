@@ -1,6 +1,6 @@
 # Production Deploy
 
-`codex-link-p2p` を kite サーバー (`kitepon.dynv6.net`) に同居デプロイする手順.
+`codex-link-p2p` を kite サーバー (`kitepon.dev`) に同居デプロイする手順.
 
 ## 構成
 
@@ -19,8 +19,8 @@
                            └───────────────┘
 
             iPhone / Mac Host ─── STUN ───► stun.l.google.com:19302  (Google public)
-                              ─── TURN ───► codex-link-p2p.kitepon.dynv6.net:3478
-                              ─── TURNS ──► codex-link-p2p.kitepon.dynv6.net:5349
+                              ─── TURN ───► codex-link-p2p.kitepon.dev:3478
+                              ─── TURNS ──► codex-link-p2p.kitepon.dev:5349
                                               │
                                               ▼
                                        ┌─────────────┐
@@ -38,12 +38,12 @@ DTLS-SRTP により Relay / coturn のどちらも payload を **復号できな
 
 ### 1. DNS
 
-[kitepon.dynv6.net](https://dynv6.com/) の管理画面で 1 つの A レコードを追加.
+[kitepon.dev](https://dynv6.com/) の管理画面で 1 つの A レコードを追加.
 HTTPS (443) と TURN (3478/5349) は同じホスト名で別ポート同居.
 
 | Hostname                                | Type | Target          |
 |-----------------------------------------|------|-----------------|
-| `codex-link-p2p.kitepon.dynv6.net`      | A    | サーバー IPv4   |
+| `codex-link-p2p.kitepon.dev`      | A    | サーバー IPv4   |
 
 ### 2. ファイアウォール / ポート
 
@@ -66,7 +66,7 @@ sudo ufw allow 49152:65535/udp
 
 ### 3. サーバー初回セットアップ
 
-> このリポジトリで実際に運用している環境では、サーバ (`kitepon.dynv6.net` の
+> このリポジトリで実際に運用している環境では、サーバ (`kitepon.dev` の
 > 192.168.1.2) に **既に license-server compose project の Caddy** が稼働して
 > いて 80/443 を占有しています. その場合は **既存 Caddy を再利用** する形が
 > ベスト (本セクションは その前提で書いています). 単独サーバへ deploy する
@@ -86,11 +86,11 @@ cd codex-link-p2p
 
 # 本番 .env を作成 (secrets は openssl で生成)
 cat > .env <<EOF
-CODEX_LINK_RELAY_URL=https://codex-link-p2p.kitepon.dynv6.net
+CODEX_LINK_RELAY_URL=https://codex-link-p2p.kitepon.dev
 CODEX_LINK_HOST_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)
 TURN_SHARED_SECRET=$(openssl rand -hex 32)
 TURN_REALM=codex-link-p2p
-TURN_URLS=stun:stun.l.google.com:19302,turn:codex-link-p2p.kitepon.dynv6.net:3478,turns:codex-link-p2p.kitepon.dynv6.net:5349
+TURN_URLS=stun:stun.l.google.com:19302,turn:codex-link-p2p.kitepon.dev:3478,turns:codex-link-p2p.kitepon.dev:5349
 TURN_CREDENTIAL_TTL_SEC=300
 EOF
 chmod 600 .env
@@ -105,7 +105,7 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d --build relay coturn
 
 ```caddy
 # BEGIN codex-link-p2p managed route
-codex-link-p2p.kitepon.dynv6.net {
+codex-link-p2p.kitepon.dev {
 	encode zstd gzip
 	@ws {
 		header Connection *Upgrade*
@@ -141,7 +141,7 @@ docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 # 内部 (Caddy 経由なし、直接 relay)
 curl -fsS http://192.168.1.2:48080/api/health     # => {"ok":true}
 # 公開 URL (Caddy + ACME 経由)
-curl -fsS https://codex-link-p2p.kitepon.dynv6.net/api/health   # => {"ok":true}
+curl -fsS https://codex-link-p2p.kitepon.dev/api/health   # => {"ok":true}
 ```
 
 ### 5. (Optional) GitHub から自動デプロイ
@@ -159,7 +159,7 @@ dev 端末で `gh` CLI から Secret を 4 つ流し込む (秘密鍵は pipe �
 ```bash
 ssh kite@192.168.1.2 'cat ~/.ssh/codex-link-p2p-deploy' \
   | gh secret set CODEX_LINK_DEPLOY_KEY --repo kitepon-rgb/codex-link-p2p
-echo -n "kitepon.dynv6.net"          | gh secret set CODEX_LINK_DEPLOY_HOST --repo kitepon-rgb/codex-link-p2p
+echo -n "kitepon.dev"          | gh secret set CODEX_LINK_DEPLOY_HOST --repo kitepon-rgb/codex-link-p2p
 echo -n "kite"                       | gh secret set CODEX_LINK_DEPLOY_USER --repo kitepon-rgb/codex-link-p2p
 echo -n "/home/kite/codex-link-p2p"  | gh secret set CODEX_LINK_DEPLOY_DIR  --repo kitepon-rgb/codex-link-p2p
 ```
@@ -173,12 +173,12 @@ gh secret list --repo kitepon-rgb/codex-link-p2p
 
 ### 6. hairpin NAT について (LAN 開発時)
 
-`kitepon.dynv6.net` の自宅 router が hairpin NAT (LAN→WAN→LAN ループバック) を
-サポートしていない場合、**LAN 内**から `https://codex-link-p2p.kitepon.dynv6.net`
+`kitepon.dev` の自宅 router が hairpin NAT (LAN→WAN→LAN ループバック) を
+サポートしていない場合、**LAN 内**から `https://codex-link-p2p.kitepon.dev`
 にアクセスすると timeout する. 開発端末の `/etc/hosts` に下記を追加して回避:
 
 ```
-192.168.1.2 codex-link-p2p.kitepon.dynv6.net
+192.168.1.2 codex-link-p2p.kitepon.dev
 ```
 
 GH Actions runner や Cellular 経由の iPhone は WAN 経由で正常に届く (この問題は
@@ -211,7 +211,7 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d --force-recreate relay
 turnutils_uclient -v -y \
   -u "$(date -d '+5 min' +%s):smoke" \
   -w "$(echo -n "$(date -d '+5 min' +%s):smoke" | openssl dgst -sha1 -hmac "$TURN_SHARED_SECRET" -binary | base64)" \
-  codex-link-p2p.kitepon.dynv6.net
+  codex-link-p2p.kitepon.dev
 ```
 
 ## トラブルシュート
@@ -221,7 +221,7 @@ turnutils_uclient -v -y \
 | `curl https://codex-link...` で TLS handshake 失敗 | Caddy ログ. ACME challenge が 80/tcp で完了したか      |
 | iPhone から接続できないが Mac Host は OK         | iPhone 側の TURN credential 取得失敗. Relay の `issueTurnCredential` ログ |
 | `relay/api/health` が timeout                    | container のヘルスチェック (`docker compose ps`) と Caddy のアップストリーム設定 |
-| coturn が TLS で連携失敗                         | Caddy が `codex-link-p2p.kitepon.dynv6.net` の cert を発行したか. `caddy_data` volume 内に `.crt` / `.key` が出ているか |
+| coturn が TLS で連携失敗                         | Caddy が `codex-link-p2p.kitepon.dev` の cert を発行したか. `caddy_data` volume 内に `.crt` / `.key` が出ているか |
 | 接続経路バッジが常に `turn`                      | NAT が両側 symmetric. これは TURN 必須なので想定内    |
 
 ## 開発環境メモ

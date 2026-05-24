@@ -137,9 +137,9 @@ iPhone UI で接続中の WebRTC 経路を表示する:
 
 ## 公開デプロイ構成
 
-MVP では Relay と coturn を kite サーバー (`kitepon.dynv6.net`) に Docker Compose でデプロイする。
+MVP では Relay と coturn を kite サーバー (`kitepon.dev`) に Docker Compose でデプロイする。
 
-- **DNS**: 動的 DNS で `codex-link-p2p.kitepon.dynv6.net` を自宅 router の WAN IP に向ける (HTTPS + TURN を 1 ホスト名に同居)
+- **DNS**: 動的 DNS で `codex-link-p2p.kitepon.dev` を自宅 router の WAN IP に向ける (HTTPS + TURN を 1 ホスト名に同居)
 - **TLS / リバースプロキシ**: 既存の `caddy:2` コンテナの `Caddyfile` に sub-domain ブロックを追加し、`reverse_proxy <LAN IP>:3000 { flush_interval -1 }` で Relay へ forward。WebSocket upgrade は Caddy が自動で扱う
 - **Relay コンテナ**: `compose.yaml` で build、`-p 127.0.0.1:3000:3000` で LAN bind、Caddy 経由でのみ外部公開
 - **coturn コンテナ**: `network_mode: host` で host network 上に listen (3478/udp+tcp、49152-65535/udp range)。`turns` 用 TLS は Caddy で TCP/443 (SNI) を `5349` に振り分けるか、coturn 内蔵で cert を読む
@@ -177,7 +177,7 @@ Phase 1-7 の実装で:
 
 ## 実機検証で判明した既知の応急処置 (2026-05-14)
 
-実機 iPhone (iOS 26.5、Wi-Fi/5G) と本番 Relay (`codex-link-p2p.kitepon.dynv6.net`) で
+実機 iPhone (iOS 26.5、Wi-Fi/5G) と本番 Relay (`codex-link-p2p.kitepon.dev`) で
 E2E 通信を確認した時点で、暫定で凌いだ箇所を [BOOTSTRAP.md の TODO セクション](../BOOTSTRAP.md#todo--既知の応急処置-phase-9-完走後に判明)
 に集約している. 要点:
 

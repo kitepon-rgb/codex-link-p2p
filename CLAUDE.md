@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `codex-link` は「これはこれで動くので保全する」決定が出ている。本リポジトリ `codex-link-p2p` は **day 1 から rendezvous + WebRTC P2P** で作り直す。
 
-最終目標: AppleStore 配布される iPhone app と、`npm install -g` 一発で動く Mac/Windows Host を提供。Relay (= `kitepon.dynv6.net`) はマルチテナント認証 + signaling + TURN credential 発行のみ。
+最終目標: AppleStore 配布される iPhone app と、`npm install -g` 一発で動く Mac/Windows Host を提供。Relay (= `kitepon.dev`) はマルチテナント認証 + signaling + TURN credential 発行のみ。
 
 ## 守るべきアーキテクチャ鉄則 (絶対)
 

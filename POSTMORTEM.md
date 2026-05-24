@@ -219,7 +219,7 @@ connecting` に推移する瞬間に DC で送出される event が落ちてい
 ### 配布
 - `@codex-link/host` の npm publish はしていない (publish 直前で停止)
 - App Store / TestFlight 提出はしていない
-- self-host していた Relay (`kitepon.dynv6.net` / Docker Compose) は停止予定
+- self-host していた Relay (`kitepon.dev` / Docker Compose) は停止予定
 
 ### ドキュメント
 - 本ファイル (POSTMORTEM.md) ← 学びの集約
