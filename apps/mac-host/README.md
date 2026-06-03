@@ -21,9 +21,9 @@ Native binaries for WebRTC are pre-built via [`node-datachannel`](https://github
 
    ```bash
    codex-link-host init \
-     --relay https://codex-link-p2p.kitepon.dev \
+     --relay https://codex-link-p2p.your-host.example.com \
      --bootstrap-token "$YOUR_BOOTSTRAP_TOKEN" \
-     --display-name "kite Mac"
+     --display-name "youruser Mac"
    ```
 
 3. Start serving iPhone clients:

@@ -36,7 +36,7 @@ iPhone 側:
 2. Xcode を開く: `apps/ios/CodexLink.xcodeproj` (deployment target が iOS 17 に上がっているため iPhone 16 Pro Max + iOS 26.5 で OK).
 3. iPhone を connect、Run (⌘R) で再インストール.
 4. アプリ起動 → 「Scan QR」.
-5. Mac で `node /Users/kite/Developer/codex-link-p2p/apps/mac-host/dist/cli.js pair` を実行 → QR を iPhone カメラで読む.
+5. Mac で `node /path/to/codex-link-p2p/apps/mac-host/dist/cli.js pair` を実行 → QR を iPhone カメラで読む.
 6. バッジが「接続中…」→「直結 (NAT越え)」or「直結」に推移すること.
 7. Mac で 1 thread 投げて transcript が iPhone に出ること.
 
