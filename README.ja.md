@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/og.png" alt="codex-link-p2p — iPhone⇄Mac Codex bridge, payload-blind by design" width="100%">
+</p>
+
 # codex-link-p2p
 
 [![status: archived](https://img.shields.io/badge/status-archived-lightgrey)](POSTMORTEM.md)
